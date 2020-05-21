@@ -184,6 +184,9 @@ namespace spacer {
     typedef default_eq<func_decl_multivector> func_decl_multivector_eq;
 
     comparison_result compare_func_multivectors(const func_decl_multivector &v1, const func_decl_multivector &v2);
+
+    // set f to true in model
+    void set_true_in_mdl(model &model, func_decl *f);
 }
 
 #endif
