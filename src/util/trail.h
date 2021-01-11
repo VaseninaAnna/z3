@@ -16,8 +16,7 @@ Author:
 Revision History:
 
 --*/
-#ifndef TRAIL_H_
-#define TRAIL_H_
+#pragma once
 
 #include "util/obj_hashtable.h"
 #include "util/region.h"
@@ -43,6 +42,12 @@ public:
         m_old_value(value) {
     }
 
+    value_trail(T & value, T const& new_value):
+        m_value(value),
+        m_old_value(value) {
+        m_value = new_value;
+    }
+
     ~value_trail() override {
     }
 
@@ -50,6 +55,29 @@ public:
         m_value = m_old_value;
     }
 };
+
+
+    
+template<typename Ctx, typename T, typename Ts>
+class scoped_value_trail : public trail<Ctx> {
+    T & m_value;
+    Ts & m_values;
+    
+public:
+    scoped_value_trail(T & value, Ts& values):
+        m_value(value),
+        m_values(values) {
+    }
+    
+    ~scoped_value_trail() override {
+    }
+    
+    void undo(Ctx & ctx) override {
+        m_value = m_values.back();
+        m_values.pop_back();
+    }
+};
+
 
 template<typename Ctx>
 class reset_flag_trail : public trail<Ctx> {
@@ -121,6 +149,28 @@ public:
     }
 };
 
+template<typename Ctx, typename V, typename T>
+class vector2_value_trail : public trail<Ctx> {
+    V             & m_vector;
+    unsigned        m_i;
+    unsigned        m_j;
+    T               m_old_value;
+public:
+    vector2_value_trail(V& v, unsigned i, unsigned j):
+        m_vector(v),
+        m_i(i),
+        m_j(j),
+        m_old_value(v[i][j]) {
+    }
+
+    ~vector2_value_trail() override {
+    }
+
+    void undo(Ctx & ctx) override {
+        m_vector[m_i][m_j] = m_old_value;
+    }
+};
+
 
 template<typename Ctx, typename D, typename R>
 class insert_obj_map : public trail<Ctx> {
@@ -130,6 +180,17 @@ public:
     insert_obj_map(obj_map<D,R>& t, D* o) : m_map(t), m_obj(o) {}
     ~insert_obj_map() override {}
     void undo(Ctx & ctx) override { m_map.remove(m_obj); }
+};
+
+template<typename Ctx, typename D, typename R>
+class remove_obj_map : public trail<Ctx> {
+    obj_map<D,R>&     m_map;
+    D*                m_obj;
+    R                 m_value;
+public:
+    remove_obj_map(obj_map<D,R>& t, D* o, R v) : m_map(t), m_obj(o), m_value(v) {}
+    ~remove_obj_map() override {}
+    void undo(Ctx & ctx) override { m_map.insert(m_obj, m_value); }
 };
 
 template<typename Ctx, typename M, typename D>
@@ -152,6 +213,18 @@ public:
     insert_ref_map(Mgr& m, M& t, D o) : m(m), m_map(t), m_obj(o) {}
     virtual ~insert_ref_map() {}
     virtual void undo(Ctx & ctx) { m_map.remove(m_obj); m.dec_ref(m_obj); }
+};
+
+template<typename Ctx, typename Mgr, typename D, typename R>
+class insert_ref2_map : public trail<Ctx> {
+    Mgr&           m;
+    obj_map<D,R*>&  m_map;
+    D*             m_obj;
+    R*             m_val;
+public:
+    insert_ref2_map(Mgr& m, obj_map<D,R*>& t, D*o, R*r) : m(m), m_map(t), m_obj(o), m_val(r) {}
+    virtual ~insert_ref2_map() {}
+    virtual void undo(Ctx & ctx) { m_map.remove(m_obj); m.dec_ref(m_obj); m.dec_ref(m_val); }
 };
 
 
@@ -252,10 +325,10 @@ public:
 
 template<typename Ctx>
 class set_bitvector_trail : public trail<Ctx> {
-    svector<bool> & m_vector;
+    bool_vector & m_vector;
     unsigned        m_idx;
 public:
-    set_bitvector_trail(svector<bool> & v, unsigned idx):
+    set_bitvector_trail(bool_vector & v, unsigned idx):
         m_vector(v),
         m_idx(idx) {
         SASSERT(m_vector[m_idx] == false);
@@ -266,6 +339,28 @@ public:
         m_vector[m_idx] = false;
     }
 };
+
+
+template<typename Ctx, typename T, bool CallDestructors = true>
+class history_trail : public trail<Ctx> {
+    vector<T, CallDestructors>& m_dst;
+    unsigned                     m_idx;
+    vector<T, CallDestructors>& m_hist;
+public:
+    history_trail(vector<T, CallDestructors>& v, unsigned idx, vector<T, CallDestructors>& hist) :
+        m_dst(v),
+        m_idx(idx),
+        m_hist(hist) {}
+    
+    ~history_trail() override {
+    }
+    
+    void undo(Ctx& ctx) override {
+        m_dst[m_idx] = m_hist.back();
+        m_hist.pop_back();
+    }
+};
+
 
 template<typename Ctx, typename T>
 class new_obj_trail : public trail<Ctx> {
@@ -302,7 +397,6 @@ public:
     ~insert_obj_trail() override {}
     void undo(Ctx & ctx) override { m_table.remove(m_obj); }
 };
-
 
 
 template<typename Ctx, typename T>
@@ -368,4 +462,3 @@ public:
     }
 };
 
-#endif /* TRAIL_H_ */

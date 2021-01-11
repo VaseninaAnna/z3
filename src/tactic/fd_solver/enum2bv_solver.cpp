@@ -23,12 +23,12 @@ Notes:
 #include "ast/bv_decl_plugin.h"
 #include "ast/datatype_decl_plugin.h"
 #include "ast/ast_pp.h"
+#include "ast/rewriter/enum2bv_rewriter.h"
 #include "model/model_smt2_pp.h"
 #include "tactic/tactic.h"
 #include "tactic/generic_model_converter.h"
-#include "solver/solver_na2as.h"
-#include "ast/rewriter/enum2bv_rewriter.h"
 #include "tactic/fd_solver/enum2bv_solver.h"
+#include "solver/solver_na2as.h"
 
 class enum2bv_solver : public solver_na2as {
     ast_manager&     m;
@@ -78,9 +78,9 @@ public:
         m_rewriter.pop(n);
     }
 
-    lbool check_sat_core(unsigned num_assumptions, expr * const * assumptions) override {
+    lbool check_sat_core2(unsigned num_assumptions, expr * const * assumptions) override {
         m_solver->updt_params(get_params());
-        return m_solver->check_sat(num_assumptions, assumptions);
+        return m_solver->check_sat_core(num_assumptions, assumptions);
     }
 
     void updt_params(params_ref const & p) override { solver::updt_params(p); m_solver->updt_params(p);  }
@@ -146,6 +146,7 @@ public:
         m_rewriter.flush_side_constraints(bounds);
         m_solver->assert_expr(bounds);
 
+
         // translate enumeration constants to bit-vectors.
         for (expr* v : vars) {
             func_decl* f = nullptr;
@@ -159,12 +160,13 @@ public:
         lbool r = m_solver->get_consequences(asms, bvars, consequences);
 
         // translate bit-vector consequences back to enumeration types
-        for (unsigned i = 0; i < consequences.size(); ++i) {
+        unsigned i = 0;
+        for (expr* c : consequences) {
             expr* a = nullptr, *b = nullptr, *u = nullptr, *v = nullptr;
             func_decl* f;
             rational num;
             unsigned bvsize;
-            VERIFY(m.is_implies(consequences[i].get(), a, b));
+            VERIFY(m.is_implies(c, a, b));
             if (m.is_eq(b, u, v) && is_uninterp_const(u) && m_rewriter.bv2enum().find(to_app(u)->get_decl(), f) && bv.is_numeral(v, num, bvsize)) {
                 SASSERT(num.is_unsigned());
                 expr_ref head(m);
@@ -174,11 +176,18 @@ public:
                     consequences[i] = m.mk_implies(a, head);
                 }
             }
+            ++i;
         }
         return r;
     }
 
+    void get_levels(ptr_vector<expr> const& vars, unsigned_vector& depth) override {
+        m_solver->get_levels(vars, depth);
+    }
 
+    expr_ref_vector get_trail() override {
+        return m_solver->get_trail();
+    }
 
     unsigned get_num_assertions() const override {
         return m_solver->get_num_assertions();

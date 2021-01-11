@@ -20,15 +20,12 @@ Notes:
 
 --*/
 
-#ifndef _SPACER_CONTEXT_H_
-#define _SPACER_CONTEXT_H_
+#pragma once
 
-#ifdef _CYGWIN
-#undef min
-#undef max
-#endif
 #include <queue>
 #include "util/poset.h"
+#include <fstream>
+
 #include "util/scoped_ptr_vector.h"
 #include "muz/spacer/spacer_manager.h"
 #include "muz/spacer/spacer_prop_solver.h"
@@ -514,6 +511,7 @@ class pred_transformer {
     stopwatch                    m_must_reachable_watch;
     stopwatch                    m_ctp_watch;
     stopwatch                    m_mbp_watch;
+    bool                         m_has_quantified_frame; // True when a quantified lemma is in the frame
 
     void init_sig();
     symbol mk_name() const;
@@ -547,6 +545,7 @@ public:
     pred_transformer(context& ctx, manager& pm, func_decl_multivector const& heads);
 
     inline bool use_native_mbp ();
+    bool mk_mdl_rf_consistent(const datalog::rule *r, model &mdl);
     reach_fact *get_rf (expr *v) {
         for (auto *rf : m_reach_facts) {
             if (v == rf->get()) {return rf;}
@@ -599,7 +598,10 @@ public:
     reach_fact* get_used_origin_rf(model &mdl, unsigned oidx, unsigned version);
     /// \brief Returns reachability fact active in the origin of the given model
     reach_fact* get_used_origin_rf(model &mdl, const manager::idx_subst &oidcs);
-    expr_ref get_origin_summary(model &mdl,
+    /// \brief Collects all the reachable facts used in mdl
+    void get_all_used_rf(model &mdl, unsigned oidx, reach_fact_ref_vector& res);
+    void get_all_used_rf(model &mdl, reach_fact_ref_vector &res);
+>>>>>>> origin/master
                                 unsigned level,
                                 const manager::idx_subst &oidcs,
                                 bool must,
@@ -638,7 +640,7 @@ public:
     /// initialize reachability facts using initial rules
     void init_rfs ();
     reach_fact *mk_rf(pob &n, model &mdl, const datalog::rule &r, unsigned version);
-    void add_rf (reach_fact *fact);  // add reachability fact
+    void add_rf (reach_fact *fact, bool force = false);  // add reachability fact
     reach_fact* get_last_rf () const { return m_reach_facts.back (); }
     expr* get_last_rf_tag () const;
 
@@ -658,7 +660,7 @@ public:
     lbool is_reachable(pob& n, expr_ref_vector* core, model_ref *model,
                        unsigned& uses_level, vector<bool>& is_concrete,
                        versioned_rule_vector& r,
-                       vector<bool>& reach_pred_used,
+                       bool_vector& reach_pred_used,
                        unsigned& num_reuse_reach);
     bool is_invariant(unsigned level, lemma* lem,
                       unsigned& solver_level,
@@ -1021,6 +1023,7 @@ enum spacer_children_order {
 };
 
 class context {
+    friend class pred_transformer;
     struct stats {
         unsigned m_num_queries;
         unsigned m_num_reuse_reach;
@@ -1076,6 +1079,7 @@ class context {
     bool                 m_use_restarts;
     bool                 m_simplify_pob;
     bool                 m_use_euf_gen;
+    bool                 m_use_lim_num_gen;
     bool                 m_use_ctp;
     bool                 m_use_inc_clause;
     bool                 m_use_ind_gen;
@@ -1103,6 +1107,7 @@ class context {
     unsigned             m_blast_term_ite_inflation;
     scoped_ptr_vector<spacer_callback> m_callbacks;
     json_marshaller      m_json_marshaller;
+    std::fstream*        m_trace_stream;
 
     // Solve using gpdr strategy
     lbool gpdr_solve_core();
@@ -1112,6 +1117,12 @@ class context {
                                     expr *trans,
                                     model &mdl,
                                     pob_ref_buffer &out);
+
+    // progress logging
+    void log_enter_level(unsigned lvl);
+    void log_propagate();
+    void log_expand_pob(pob &);
+    void log_add_lemma(pred_transformer &, lemma&);
 
     // Functions used by search.
     lbool solve_core(unsigned from_lvl = 0);
@@ -1124,13 +1135,16 @@ class context {
     bool create_children(pob& n,
                          versioned_rule_vector &rules,
                          model &mdl,
-                         const vector<bool>& reach_pred_used,
+                         const bool_vector& reach_pred_used,
                          pob_ref_buffer &out);
 
     /**
        \brief Retrieve satisfying assignment with explanation.
     */
-    expr_ref mk_sat_answer() const {return get_ground_sat_answer();}
+    expr_ref mk_sat_answer() const {
+        proof_ref pr = get_ground_refutation();
+        return expr_ref(pr.get(), pr.get_manager());
+    }
     expr_ref mk_unsat_answer() const;
     unsigned get_cex_depth ();
 
@@ -1163,6 +1177,9 @@ class context {
     void predecessor_eh();
 
     void updt_params();
+    lbool handle_unknown(pob &n, const datalog::rule *r, model &model);
+    bool mk_mdl_rf_consistent(model &mdl);
+
 public:
     /**
        Initial values of predicates are stored in corresponding relations in dctx.
@@ -1180,6 +1197,7 @@ public:
     bool weak_abs() const {return m_weak_abs;}
     bool use_qlemmas() const {return m_use_qlemmas;}
     bool use_euf_gen() const {return m_use_euf_gen;}
+    bool use_lim_num_gen() const {return m_use_lim_num_gen;}
     bool simplify_pob() const {return m_simplify_pob;}
     bool use_ctp() const {return m_use_ctp;}
     bool use_inc_clause() const {return m_use_inc_clause;}
@@ -1189,7 +1207,7 @@ public:
     bool use_bg_invs() const {return m_use_bg_invs;}
 
     ast_manager&      get_ast_manager() const {return m;}
-    manager&          get_manager() {return m_pm;}
+    const manager&          get_manager() {return m_pm;}
     pred_transformer& get_pred_transformer(func_decl* p) const;
     pred_transformer& get_pred_transformer(ptr_vector<func_decl>& p);
     pt_collection subsumers(pred_transformer &pt);
@@ -1210,7 +1228,7 @@ public:
      * (for e.g. P(0,1,0,0,3)) that together form a ground derivation to query
      */
     expr_ref get_ground_sat_answer () const;
-    proof_ref get_ground_refutation();
+    proof_ref get_ground_refutation() const;
     void get_rules_along_trace (datalog::rule_ref_vector& rules);
 
     void collect_statistics(statistics& st) const;
@@ -1235,7 +1253,7 @@ public:
     expr_ref get_reachable (func_decl* p);
     void add_invariant (func_decl *pred, expr* property);
     model_ref get_model();
-    proof_ref get_proof() const;
+    proof_ref get_proof() const {return get_ground_refutation();}
 
     void add_constraint (expr *c, unsigned lvl);
 
@@ -1255,4 +1273,3 @@ public:
 inline bool pred_transformer::use_native_mbp () {return ctx.use_native_mbp ();}
 }
 
-#endif

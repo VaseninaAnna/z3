@@ -18,8 +18,10 @@ Revision History:
 #include<iostream>
 #include "util/cancel_eh.h"
 #include "util/scoped_timer.h"
+#include "util/scoped_ctrl_c.h"
 #include "util/file_path.h"
 #include "parsers/smt2/smt2parser.h"
+#include "model/model_params.hpp"
 #include "opt/opt_context.h"
 #include "opt/opt_cmds.h"
 #include "opt/opt_parse.h"
@@ -76,6 +78,16 @@ extern "C" {
         RESET_ERROR_CODE();
         CHECK_FORMULA(a,);        
         to_optimize_ptr(o)->add_hard_constraint(to_expr(a));
+        Z3_CATCH;
+    }
+
+    void Z3_API Z3_optimize_assert_and_track(Z3_context c, Z3_optimize o, Z3_ast a, Z3_ast t) {
+        Z3_TRY;
+        LOG_Z3_optimize_assert_and_track(c, o, a, t);
+        RESET_ERROR_CODE();
+        CHECK_FORMULA(a,);        
+        CHECK_FORMULA(t,);        
+        to_optimize_ptr(o)->add_hard_constraint(to_expr(a), to_expr(t));
         Z3_CATCH;
     }
 
@@ -138,21 +150,23 @@ extern "C" {
         cancel_eh<reslimit> eh(mk_c(c)->m().limit());
         unsigned timeout = to_optimize_ptr(o)->get_params().get_uint("timeout", mk_c(c)->get_timeout());
         unsigned rlimit = to_optimize_ptr(o)->get_params().get_uint("rlimit", mk_c(c)->get_rlimit());
+        bool     use_ctrl_c  = to_optimize_ptr(o)->get_params().get_bool("ctrl_c", true);
         api::context::set_interruptable si(*(mk_c(c)), eh);        
         {
+            scoped_ctrl_c ctrlc(eh, false, use_ctrl_c);
             scoped_timer timer(timeout, &eh);
             scoped_rlimit _rlimit(mk_c(c)->m().limit(), rlimit);
             try {
                 expr_ref_vector asms(mk_c(c)->m());
-                asms.append(num_assumptions, to_exprs(assumptions));
+                asms.append(num_assumptions, to_exprs(num_assumptions, assumptions));
                 r = to_optimize_ptr(o)->optimize(asms);
             }
             catch (z3_exception& ex) {
-                if (!mk_c(c)->m().canceled()) {
+                if (mk_c(c)->m().inc()) {
                     mk_c(c)->handle_exception(ex);
                 }
                 r = l_undef;
-                if (ex.msg() == std::string("canceled") && mk_c(c)->m().canceled()) {
+                if (!mk_c(c)->m().inc()) {
                     to_optimize_ptr(o)->set_reason_unknown(ex.msg());
                 }
                 else {
@@ -197,7 +211,8 @@ extern "C" {
         to_optimize_ptr(o)->get_model(_m);
         Z3_model_ref * m_ref = alloc(Z3_model_ref, *mk_c(c)); 
         if (_m) {
-            if (mk_c(c)->params().m_model_compress) _m->compress();
+            model_params mp(to_optimize_ptr(o)->get_params());
+            if (mp.compact()) _m->compress();
             m_ref->m_model = _m;
         }
         else {
@@ -215,8 +230,7 @@ extern "C" {
         param_descrs descrs;
         to_optimize_ptr(o)->collect_param_descrs(descrs);
         to_params(p)->m_params.validate(descrs);
-        params_ref pr = to_param_ref(p);
-        to_optimize_ptr(o)->updt_params(pr);
+        to_optimize_ptr(o)->updt_params(to_param_ref(p));
         Z3_CATCH;
     }
     
@@ -343,14 +357,14 @@ extern "C" {
         try {
             if (!parse_smt2_commands(*ctx.get(), s)) {
                 ctx = nullptr;
-                SET_ERROR_CODE(Z3_PARSER_ERROR, errstrm.str().c_str());
+                SET_ERROR_CODE(Z3_PARSER_ERROR, errstrm.str());
                 return;
             }        
         }
         catch (z3_exception& e) {
             errstrm << e.msg();
             ctx = nullptr;
-            SET_ERROR_CODE(Z3_PARSER_ERROR, errstrm.str().c_str());
+            SET_ERROR_CODE(Z3_PARSER_ERROR, errstrm.str());
             return;
         }
 

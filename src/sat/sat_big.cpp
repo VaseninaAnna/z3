@@ -164,22 +164,23 @@ namespace sat {
         DEBUG_CODE(for (unsigned i = 0; i < num_lits; ++i) { VERIFY(m_left[i] < m_right[i]);});
     }
 
-    // svector<std::pair<literal, literal>> big::s_del_bin;
 
     bool big::in_del(literal u, literal v) const {
         if (u.index() > v.index()) std::swap(u, v);
-        return m_del_bin.contains(std::make_pair(u, v));
+        return m_del_bin[u.index()].contains(v);
     }
 
     void big::add_del(literal u, literal v) {
         if (u.index() > v.index()) std::swap(u, v);
-        m_del_bin.push_back(std::make_pair(u, v));
+		
+        m_del_bin[u.index()].push_back(v);
     }
 
     unsigned big::reduce_tr(solver& s) {
         unsigned idx = 0;
         unsigned elim = 0;
         m_del_bin.reset();
+        m_del_bin.reserve(s.m_watches.size());
         for (watch_list & wlist : s.m_watches) {
             if (s.inconsistent()) break;
             literal u = to_literal(idx++);
@@ -190,7 +191,7 @@ namespace sat {
                 watched& w = *it;
                 if (learned() ? w.is_binary_learned_clause() : w.is_binary_clause()) {
                     literal v = w.get_literal();
-                    if (u != get_parent(v) && safe_reach(u, v)) {
+                    if (u != get_parent(v) && ~u != get_parent(v) && safe_reach(u, v)) {
                         ++elim;
                         add_del(~u, v);
                         if (s.get_config().m_drat) s.m_drat.del(~u, v);
@@ -198,7 +199,7 @@ namespace sat {
                         s.add_ate(~u, v);
                         if (find_binary_watch(wlist, ~v)) {
                             IF_VERBOSE(10, verbose_stream() << "binary: " << ~u << "\n");
-                            s.assign(~u, justification());
+                            s.assign_unit(~u);
                         }
                         // could turn non-learned non-binary tautology into learned binary.
                         s.get_wlist(~v).erase(watched(~u, w.is_learned()));
@@ -210,23 +211,6 @@ namespace sat {
             }
             wlist.set_end(itprev);
         }        
-
-#if 0
-        s_del_bin.append(m_del_bin);
-        IF_VERBOSE(1, 
-                   display(verbose_stream() << "Learned: " << learned() << ":");
-                   verbose_stream() << "del-bin\n";
-                   for (auto p : m_del_bin) {
-                       verbose_stream() << p.first << " " << p.second << "\n";
-                       if (safe_reach(~p.first, p.second)) {
-                           display_path(verbose_stream(), ~p.first, p.second) << " " << "\n";
-                       }
-                       else {
-                           display_path(verbose_stream(), ~p.second, p.first) << " " << "\n";
-                       }                       
-                   }
-                   );
-#endif
         s.propagate(false);
         return elim;
     }
@@ -283,7 +267,7 @@ namespace sat {
         for (auto& next : m_dag) {
             if (!next.empty()) {
                 out << to_literal(idx) << " : " << m_left[idx] << ":" << m_right[idx] << " -> " << next << "\n";
-#if 0
+#if 1
                 for (literal n : next) {
                     out << n << "[" << m_left[n.index()] << ":" << m_right[n.index()] << "] ";
                 }

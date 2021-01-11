@@ -8,6 +8,7 @@
 # You should **not** import ``mk_util`` here
 # to avoid having this code depend on the
 # of the Python build system.
+import io
 import os
 import pprint
 import logging
@@ -622,7 +623,7 @@ def mk_gparams_register_modules_internal(h_files_full_path, path):
     reg_mod_descr_pat = re.compile('[ \t]*REG_MODULE_DESCRIPTION\(\'([^\']*)\', *\'([^\']*)\'\)')
     for h_file in sorted_headers_by_component(h_files_full_path):
         added_include = False
-        with open(h_file, 'r') as fin:
+        with io.open(h_file, encoding='utf-8', mode='r') as fin:
             for line in fin:
                 m = reg_pat.match(line)
                 if m:
@@ -643,7 +644,7 @@ def mk_gparams_register_modules_internal(h_files_full_path, path):
     for code in cmds:
         fout.write('{ param_descrs d; %s(d); gparams::register_global(d); }\n' % code)
     for (mod, code) in mod_cmds:
-        fout.write('{ param_descrs * d = alloc(param_descrs); %s(*d); gparams::register_module("%s", d); }\n' % (code, mod))
+        fout.write('{ std::function<param_descrs *(void)> f = []() { auto* d = alloc(param_descrs); %s(*d); return d; }; gparams::register_module("%s", f); }\n' % (code, mod))
     for (mod, descr) in mod_descrs:
         fout.write('gparams::register_module_descr("%s", "%s");\n' % (mod, descr))
     fout.write('}\n')
@@ -696,7 +697,7 @@ def mk_install_tactic_cpp_internal(h_files_full_path, path):
     for h_file in sorted_headers_by_component(h_files_full_path):
         added_include = False
         try:
-            with open(h_file, 'r') as fin:
+            with io.open(h_file, encoding='utf-8', mode='r') as fin:
                 for line in fin:
                     if tactic_pat.match(line):
                         if not added_include:
@@ -764,7 +765,7 @@ def mk_mem_initializer_cpp_internal(h_files_full_path, path):
     finalizer_pat        = re.compile('[ \t]*ADD_FINALIZER\(\'([^\']*)\'\)')
     for h_file in sorted_headers_by_component(h_files_full_path):
         added_include = False
-        with open(h_file, 'r') as fin:
+        with io.open(h_file, encoding='utf-8', mode='r') as fin:
             for line in fin:
                 m = initializer_pat.match(line)
                 if m:

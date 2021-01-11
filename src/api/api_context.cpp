@@ -18,14 +18,15 @@ Revision History:
 
 --*/
 #include<typeinfo>
-#include "api/api_context.h"
 #include "util/z3_version.h"
+#include "api/api_context.h"
 #include "ast/ast_pp.h"
 #include "ast/ast_ll_pp.h"
 #include "api/api_log_macros.h"
 #include "api/api_util.h"
 #include "ast/reg_decl_plugins.h"
 #include "math/realclosure/realclosure.h"
+
 
 // The install_tactics procedure is automatically generated
 void install_tactics(tactic_manager & ctx);
@@ -101,6 +102,7 @@ namespace api {
         m_datalog_fid = m().mk_family_id("datalog_relation");
         m_fpa_fid   = m().mk_family_id("fpa");
         m_seq_fid   = m().mk_family_id("seq");
+        m_special_relations_fid   = m().mk_family_id("specrels");
         m_dt_plugin = static_cast<datatype_decl_plugin*>(m().get_plugin(m_dt_fid));
     
         install_tactics(*this);
@@ -114,32 +116,28 @@ namespace api {
             DEBUG_CODE(warning_msg("Uncollected memory: %d: %s", kv.m_key, typeid(*val).name()););
             dealloc(val);
         }
+        if (m_params.owns_manager())
+            m_manager.detach();
     }
 
     context::set_interruptable::set_interruptable(context & ctx, event_handler & i):
         m_ctx(ctx) {
-        #pragma omp critical (set_interruptable) 
-        {
-            SASSERT(m_ctx.m_interruptable == 0);
-            m_ctx.m_interruptable = &i;
-        }
+        lock_guard lock(ctx.m_mux);
+        SASSERT(m_ctx.m_interruptable == 0);
+        m_ctx.m_interruptable = &i;        
     }
 
     context::set_interruptable::~set_interruptable() {
-        #pragma omp critical (set_interruptable) 
-        {
-            m_ctx.m_interruptable = nullptr;
-        }
+        lock_guard lock(m_ctx.m_mux);
+        m_ctx.m_interruptable = nullptr;        
     }
 
     void context::interrupt() {
-        #pragma omp critical (set_interruptable)
-        {
-            if (m_interruptable)
-                (*m_interruptable)(API_INTERRUPT_EH_CALLER);
-            m_limit.cancel();
-            m().limit().cancel();
-        }
+        lock_guard lock(m_mux);
+        if (m_interruptable)
+            (*m_interruptable)(API_INTERRUPT_EH_CALLER);
+        m_limit.cancel();
+        m().limit().cancel();        
     }
     
     void context::set_error_code(Z3_error_code err, char const* opt_msg) {
@@ -151,11 +149,13 @@ namespace api {
         }
     }
 
-    void context::reset_error_code() { 
-        m_error_code = Z3_OK; 
+    void context::set_error_code(Z3_error_code err, std::string &&opt_msg) {
+        m_error_code = err;
+        if (err != Z3_OK) {
+            m_exception_msg = std::move(opt_msg);
+            invoke_error_handler(err);
+        }
     }
-
-
 
     void context::check_searching() {
         if (m_searching) { 
@@ -167,9 +167,15 @@ namespace api {
         m_string_buffer = str?str:"";
         return const_cast<char *>(m_string_buffer.c_str());
     }
+
+    char * context::mk_external_string(char const * str, unsigned n) {
+        m_string_buffer.clear();
+        m_string_buffer.append(str, n);
+        return const_cast<char *>(m_string_buffer.c_str());
+    }
     
-    char * context::mk_external_string(std::string const & str) {
-        m_string_buffer = str;
+    char * context::mk_external_string(std::string && str) {
+        m_string_buffer = std::move(str);
         return const_cast<char *>(m_string_buffer.c_str());
     }
 
@@ -189,6 +195,11 @@ namespace api {
                 invoke_error_handler(Z3_INVALID_ARG);
             }
             e = m_datalog_util.mk_numeral(n.get_uint64(), s);
+        }
+        else if (fid == m_fpa_fid) {
+            scoped_mpf tmp(fpautil().fm());
+            fpautil().fm().set(tmp, fpautil().get_ebits(s), fpautil().get_sbits(s), n.get_double());
+            e = fpautil().mk_value(tmp);
         }
         else {
             invoke_error_handler(Z3_INVALID_ARG);
@@ -291,7 +302,8 @@ namespace api {
                     buffer << mk_bounded_pp(a->get_arg(i), m(), 3) << " of sort ";
                     buffer << mk_pp(m().get_sort(a->get_arg(i)), m()) << "\n";
                 }
-                warning_msg("%s",buffer.str().c_str());
+                auto str = buffer.str();
+                warning_msg("%s", str.c_str());
                 break;
             }
             case AST_VAR:
@@ -384,7 +396,6 @@ extern "C" {
         if (a) {
             mk_c(c)->m().dec_ref(to_ast(a));
         }
-
         Z3_CATCH;
     }
 
@@ -420,13 +431,13 @@ extern "C" {
 
     void Z3_API Z3_reset_memory(void) {
         LOG_Z3_reset_memory();
-        memory::finalize();
+        memory::finalize(false);
         memory::initialize(0);
     }
 
     void Z3_API Z3_finalize_memory(void) {
         LOG_Z3_finalize_memory();
-        memory::finalize();
+        memory::finalize(true);
     }
 
     Z3_error_code Z3_API Z3_get_error_code(Z3_context c) {
@@ -466,16 +477,10 @@ extern "C" {
         }
     }
 
-
     Z3_API char const * Z3_get_error_msg(Z3_context c, Z3_error_code err) {
         LOG_Z3_get_error_msg(c, err);
         return _get_error_msg(c, err);
     }
-
-    Z3_API char const * Z3_get_error_msg_ex(Z3_context c, Z3_error_code err) {
-        return Z3_get_error_msg(c, err);
-    }
-
 
     void Z3_API Z3_set_ast_print_mode(Z3_context c, Z3_ast_print_mode mode) {
         Z3_TRY;
