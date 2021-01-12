@@ -428,7 +428,7 @@ pob *derivation::create_next_child ()
             }
         }
     }
-    compute_implicant_literals (*mdl, u, lits);
+    lits = compute_implicant_literals (*mdl, u);
     expr_ref v(m);
     v = mk_and (lits);
 
@@ -804,7 +804,7 @@ void pred_transformer::occurrence_cache::init(const vector<std::pair<pt_rules&, 
                     func_decl *f = r.get_tail(i)->get_decl();
                     insert_multiset(m_body_multiset, f);
                     occurrence occ { &r, i, version, kv.get_value()->app_tag(i) };
-                    auto *e = m_occurrences.insert_if_not_there2(f, vector<occurrence>());
+                    auto *e = m_occurrences.insert_if_not_there3(f, vector<occurrence>());
                     e->get_data().m_value.push_back(occ);
                 }
             }
@@ -862,7 +862,7 @@ bool pred_transformer::occurrence_cache::occurrence_matcher::shift_from(
 bool pred_transformer::occurrence_cache::occurrence_matcher::shift_to(unsigned index, unsigned occ_index) {
     const occurrence &to_occ = m_occs[occ_index];
     func_decl *to_head = to_occ.rule->get_decl();
-    versioned_rule &to_entry = m_used_rules.insert_if_not_there2({to_head, to_occ.version}, {nullptr, 0})->get_data().m_value;
+    versioned_rule &to_entry = m_used_rules.insert_if_not_there3({to_head, to_occ.version}, {nullptr, 0})->get_data().m_value;
     if (to_entry.first == to_occ.rule || to_entry.second == 0) {
         to_entry.first = to_occ.rule;
         ++to_entry.second;
@@ -1226,7 +1226,7 @@ void pred_transformer::find_rules(model &model,
     SASSERT(rules.empty());
     SASSERT(is_concrete.empty());
     versioned_func_map<const datalog::rule*> best_rules;
-    versioned_func_map<vector<bool>> reach_pred_used_map;
+    versioned_func_map<bool_vector> reach_pred_used_map;
     versioned_func_map<bool> concrete_heads;
 
     // find a rule whose tag is true in the model;
@@ -1249,7 +1249,7 @@ void pred_transformer::find_rules(model &model,
                     bool intersects_with_all_rfs = true;
                     num_reuse_reach = 0;
                     unsigned tail_sz = r->get_uninterpreted_tail_size();
-                    vector<bool> rpu;
+                    bool_vector rpu;
                     for (unsigned i = 0; i < tail_sz; i++) {
                         bool used = false;
                         func_decl* d = r->get_tail(i)->get_decl();
@@ -1988,7 +1988,7 @@ lbool pred_transformer::is_reachable(pob& n, expr_ref_vector* core,
         SASSERT (reach_assumps.empty ());
         TRACE ("spacer", tout << "unreachable with lemmas\n";
                if (core) tout << "Core:\n" << *core << "\n";);
-            );
+
                if (core) {
                    LOG_STREAM << "Core:\n";
                    for (unsigned i = 0; i < core->size (); i++) {
@@ -3072,10 +3072,10 @@ void context::init_rules(const datalog::rule_set& rules, decls2rel& rels)
         func_decl_multivector preds;
         preds.push_back({pred, 1});
         SASSERT(!rels.contains(preds));
-        auto* pt = rels.insert_if_not_there(preds, alloc(pred_transformer, *this,
+        auto* e = rels.insert_if_not_there3(preds, alloc(pred_transformer, *this,
                                                         get_manager(), preds));
         datalog::rule_vector const& pred_rules = *dit->m_value;
-        for (auto rule : pred_rules) {pt->add_rule(rule);}
+        for (auto rule : pred_rules) {e->get_data().m_value->add_rule(rule);}
     }
 
     // Allocate predicate transformers for predicates that are used
@@ -4129,16 +4129,18 @@ void context::predecessor_eh()
 // it is possible that tag is true, but model.eval(fact) is unknown
 // This function fixes the model by flipping the value of tag in
 // this case.
-bool pred_transformer::mk_mdl_rf_consistent(const datalog::rule *r,
+bool pred_transformer::mk_mdl_rf_consistent(const versioned_rule_vector &rules,
                                             model &model) {
     expr_ref rf(m);
     reach_fact_ref_vector child_reach_facts;
 
-    SASSERT(r != nullptr);
-    ptr_vector<func_decl> preds;
-    find_predecessors(*r, preds);
+    SASSERT(!rules.empty());
+    vector<versioned_func> preds;
+    find_predecessors(rules, preds);
     for (unsigned i = 0; i < preds.size(); i++) {
-        func_decl *pred = preds[i];
+        versioned_func &vf = preds.get(i);
+        func_decl *pred = vf.func;
+        
         bool atleast_one_true = false;
         pred_transformer &ch_pt = ctx.get_pred_transformer(pred);
         // get all reach facts of pred used in the model
@@ -4147,8 +4149,10 @@ bool pred_transformer::mk_mdl_rf_consistent(const datalog::rule *r,
         ch_pt.get_all_used_rf(model, i, used_rfs);
         for (auto *rf : used_rfs) {
             pm.formula_n2o(rf->get(), o_ch_reach, i);
+            pm.formula_v2v(o_ch_reach, o_ch_reach, 0, vf.version);
+
             if (!model.is_true(o_ch_reach)) {
-                func_decl *tag = to_app(rf->tag())->get_decl();
+                func_decl *tag = to_app (o_ch_reach.get ())->get_decl ();
                 set_true_in_mdl(model, tag);
             } else
                 atleast_one_true = true;
@@ -4174,6 +4178,7 @@ bool context::mk_mdl_rf_consistent(model &mdl) {
     expr_ref exp(m);
     for (auto &rel : m_rels) {
         bool atleast_one_true = false;
+        func_decl_multivector mvec = *rel.m_key;
         pred_transformer &pt = *rel.m_value;
         used_rfs.reset();
         pt.get_all_used_rf(mdl, used_rfs);
@@ -4197,16 +4202,18 @@ bool context::mk_mdl_rf_consistent(model &mdl) {
 // model is good enough if it satisfies
 // 1. all the reachable states whose tag is set in the model
 // 2. Tr && pob
-lbool context::handle_unknown(pob &n, const datalog::rule *r, model &model) {
-    if (r == nullptr) {
+lbool context::handle_unknown(pob &n, versioned_rule_vector rules, model &model) {
+    if (rules.empty()) {
         if (model.is_true(n.post()) && mk_mdl_rf_consistent(model))
             return l_true;
         else
             return l_undef;
     }
     // model \models reach_fact && Tr && pob
-    if (model.is_true(n.pt().get_transition(*r)) && model.is_true(n.post()) &&
-        n.pt().mk_mdl_rf_consistent(r, model)) {
+    expr_ref_vector trans(m);
+    n.pt().get_transitions(rules, trans);
+    if (model.is_true(trans) && model.is_true(n.post()) &&
+        n.pt().mk_mdl_rf_consistent(rules, model)) {
         return l_true;
     }
     return l_undef;
@@ -4267,7 +4274,7 @@ lbool context::expand_pob(pob& n, pob_ref_buffer &out)
     lbool res = n.pt ().is_reachable (n, &cube, &model, uses_level, is_concrete, rules,
                                       reach_pred_used, num_reuse_reach);
     if (model) model->set_model_completion(false);
-    if (res == l_undef && model) res = handle_unknown(n, r, *model);
+    if (res == l_undef && model) res = handle_unknown(n, rules, *model);
 
     checkpoint ();
     IF_VERBOSE (1, verbose_stream () << "." << std::flush;);
@@ -4690,7 +4697,7 @@ bool context::create_children(pob& n,
     scoped_watch _w_ (m_create_children_watch);
     pred_transformer& pt = n.pt();
 
-    SASSERT (r.get_uninterpreted_tail_size () > 0);
+    // SASSERT (r.get_uninterpreted_tail_size () > 0);
     // obtain all formulas to consider for model generalization
     expr_ref_vector forms(m);
     pt.get_transitions(rules, forms);

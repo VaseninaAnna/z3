@@ -545,7 +545,7 @@ public:
     pred_transformer(context& ctx, manager& pm, func_decl_multivector const& heads);
 
     inline bool use_native_mbp ();
-    bool mk_mdl_rf_consistent(const datalog::rule *r, model &mdl);
+    bool mk_mdl_rf_consistent(const versioned_rule_vector &rules, model &mdl);
     reach_fact *get_rf (expr *v) {
         for (auto *rf : m_reach_facts) {
             if (v == rf->get()) {return rf;}
@@ -580,6 +580,11 @@ public:
     }
     unsigned get_num_levels() const {return m_frames.size ();}
     expr_ref get_cover_delta(func_decl* p_orig, int level);
+    expr_ref get_origin_summary(model &mdl,
+                                unsigned level,
+                                const manager::idx_subst &oidcs,
+                                bool must,
+                                const ptr_vector<app> **aux);
     void     add_cover(unsigned level, expr* property, bool bg = false);
     expr_ref get_reachable();
     pt_collection subsumers();
@@ -601,16 +606,10 @@ public:
     /// \brief Collects all the reachable facts used in mdl
     void get_all_used_rf(model &mdl, unsigned oidx, reach_fact_ref_vector& res);
     void get_all_used_rf(model &mdl, reach_fact_ref_vector &res);
->>>>>>> origin/master
-                                unsigned level,
-                                const manager::idx_subst &oidcs,
-                                bool must,
-                                const ptr_vector<app> **aux);
-
     bool is_ctp_blocked(lemma *lem);
     void find_rules(model &mdl, versioned_rule_vector& rules);
     void find_rules(model &mev, vector<bool>& is_concrete,
-                    vector<bool>& reach_pred_used,
+                    bool_vector& reach_pred_used,
                     unsigned& num_reuse_reach,
                     versioned_rule_vector& rules);
     expr* get_transition(datalog::rule const& r) {
@@ -1177,7 +1176,7 @@ class context {
     void predecessor_eh();
 
     void updt_params();
-    lbool handle_unknown(pob &n, const datalog::rule *r, model &model);
+    lbool handle_unknown(pob &n, versioned_rule_vector rules, model &model);
     bool mk_mdl_rf_consistent(model &mdl);
 
 public:
@@ -1207,7 +1206,7 @@ public:
     bool use_bg_invs() const {return m_use_bg_invs;}
 
     ast_manager&      get_ast_manager() const {return m;}
-    const manager&          get_manager() {return m_pm;}
+    manager&          get_manager() {return m_pm;}
     pred_transformer& get_pred_transformer(func_decl* p) const;
     pred_transformer& get_pred_transformer(ptr_vector<func_decl>& p);
     pt_collection subsumers(pred_transformer &pt);
