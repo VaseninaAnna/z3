@@ -2229,6 +2229,7 @@ void pred_transformer::subsume_lemmas(const pt_collection &subsumed_pts)
     }
 }
 
+///////////////////////
 void pred_transformer::merge(const vector<std::pair<pred_transformer*, unsigned>> &pts)
 {
     LOG_STREAM << "MERGING! " << m_name << "\n";
@@ -2242,6 +2243,11 @@ void pred_transformer::merge(const vector<std::pair<pred_transformer*, unsigned>
         unsigned count = pair.second;
         for (unsigned version = 0; version < count; ++version) {
             expr_ref tmp(m);
+            // pt_rules pt_rules;
+            // for (auto r : pt.m_rules) {
+            //     init_rule(get_context().get_rels(), *r, pt_rules);
+            // }
+
             pm.formula_v2v(pt->m_transition, tmp, 0, version);
             transition.push_back(tmp);
             pm.formula_v2v(pt->m_init, tmp, 0, version);
@@ -2343,7 +2349,7 @@ void pred_transformer::init_rules(decls2rel const& pts) {
     expr_ref_vector transitions(m), not_inits(m);
     app_ref tag(m);
     for (auto r : m_rules) {
-        init_rule(pts, *r);
+        init_rule(pts, *r, m_pt_rules);
     }
 
     if (m_pt_rules.empty()) {
@@ -2351,8 +2357,8 @@ void pred_transformer::init_rules(decls2rel const& pts) {
         m_transition_clauses.reset();
     }
     else {
-        SASSERT(m_heads.size() == 1 && m_heads[0].count == 1);
-        unsigned i = 0;
+        //SASSERT(m_heads.size() == 1 && m_heads[0].count == 1);
+        static unsigned i = 0;
         expr_ref_vector transitions(m);
         expr_ref_vector transition_clause(m);
         transition_clause.push_back (m_extend_lit->get_arg(0));
@@ -2395,7 +2401,8 @@ static bool is_all_non_null(app_ref_vector const& apps) {
 }
 #endif
 
-void pred_transformer::init_rule(decls2rel const& pts, datalog::rule const& rule) {
+void pred_transformer::init_rule(decls2rel const& pts, datalog::rule const& rule,
+                                    pt_rules& pt_rules) {
     scoped_watch _t_(m_initialize_watch);
 
     // Predicates that are variable representatives. Other predicates at
@@ -2403,6 +2410,7 @@ void pred_transformer::init_rule(decls2rel const& pts, datalog::rule const& rule
     expr_ref_vector side(m);
     app_ref_vector var_reprs(m);
     ptr_vector<app> aux_vars;
+    static unsigned num_pred = 0;
 
     unsigned ut_size = rule.get_uninterpreted_tail_size();
     unsigned t_size  = rule.get_tail_size();
@@ -2413,7 +2421,8 @@ void pred_transformer::init_rule(decls2rel const& pts, datalog::rule const& rule
             throw default_exception("SPACER does not support "
                                     "negated predicates in rule tails");
         }
-        init_atom(pts, rule.get_tail(i), var_reprs, side, i);
+        init_atom(pts, rule.get_tail(i), var_reprs, side, num_pred);
+        ++num_pred;
     }
     // -- substitute free variables
     expr_ref trans(m);
@@ -2444,7 +2453,7 @@ void pred_transformer::init_rule(decls2rel const& pts, datalog::rule const& rule
     // allow quantifiers in init rule
     SASSERT(ut_size == 0 || is_ground(trans));
     if (!m.is_false(trans)) {
-        pt_rule &ptr = m_pt_rules.mk_rule(m, rule);
+        pt_rule &ptr = pt_rules.mk_rule(m, rule);
         ptr.set_trans(trans);
         ptr.set_auxs(aux_vars);
         ptr.set_reps(var_reprs);

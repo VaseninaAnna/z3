@@ -527,7 +527,8 @@ class pred_transformer {
 
     // Initialization
     void init_rules(decls2rel const& pts);
-    void init_rule(decls2rel const& pts, datalog::rule const& rule);
+    void init_rule(decls2rel const& pts, datalog::rule const& rule,
+                                        pt_rules& pt_rules);
     void init_atom(decls2rel const& pts, app * atom, app_ref_vector& var_reprs,
                    expr_ref_vector& side, unsigned tail_idx);
 
@@ -1171,6 +1172,7 @@ public:
     context(fp_params const&  params, ast_manager& m);
     ~context();
 
+    decls2rel get_rels() const { return m_rels; }  
 
     const fp_params &get_params() const { return m_params; }
     bool use_eq_prop() const {return m_use_eq_prop;}
