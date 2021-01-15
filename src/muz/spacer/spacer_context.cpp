@@ -1071,17 +1071,19 @@ void pred_transformer::init_sig()
 {
     ptr_vector<sort> domain;
     for (auto &cfunc : m_heads) {
+        unsigned num_arg = 0;
         func_decl *head = cfunc.func;
         for (unsigned version = 0; version < cfunc.count; ++version) {
             for (unsigned i = 0; i < head->get_arity(); ++i) {
                 sort * arg_sort = head->get_domain(i);
                 domain.push_back(arg_sort);
                 std::stringstream name_stm;
-                name_stm << head->get_name() << '_' << i;
+                name_stm << head->get_name() << '_' << num_arg;
                 func_decl_ref stm(m);
                 stm = m.mk_func_decl(symbol(name_stm.str().c_str()), 0, (sort*const*)nullptr, arg_sort);
-                m_sig.push_back(pm.get_version_pred(pm.get_o_pred(stm, 0), 0, version));
+                m_sig.push_back(pm.get_o_pred(stm, 0));
                 pm.associate(stm, head);
+                ++num_arg;
             }
         }
     }
@@ -2518,7 +2520,7 @@ void pred_transformer::init_atom(decls2rel const &pts, app *atom,
         app_ref rep(m);
 
         if (tail_idx == UINT_MAX) {
-            rep = m.mk_const(pm.o2n(pt.sig(i), 0));
+            rep = m.mk_const(pm.o2n(sig(version * arity + i), 0));
         } else {
             rep = m.mk_const(pm.o2o(pt.sig(i), 0, tail_idx));
         }
