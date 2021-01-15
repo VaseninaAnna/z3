@@ -2234,39 +2234,55 @@ void pred_transformer::merge(const vector<std::pair<pred_transformer*, unsigned>
 {
     LOG_STREAM << "MERGING! " << m_name << "\n";
     LOG_STREAM.flush();
-    // dvvrd: TODO: trace it baby
-    expr_ref_vector transition(m);
+
+    // init_rules(get_context().get_rels())
+    expr_ref_vector transitions(m), not_inits(m);;
     expr_ref_vector init(m);
     m_all_init = true;
+    app_ref tag(m);
+
+    unsigned i = 0;
+    // av: TODO: push m_extend_lit to clause
+    // av: TODO: merge with pt::init_rules after code is complete
     for (auto &pair : pts) {
         pred_transformer *pt = pair.first;
         unsigned count = pair.second;
         for (unsigned version = 0; version < count; ++version) {
-            expr_ref tmp(m);
-            // pt_rules pt_rules;
-            // for (auto r : pt.m_rules) {
-            //     init_rule(get_context().get_rels(), *r, pt_rules);
-            // }
+            expr_ref_vector transition_clause(m);
+            pt_rules pt_rules;
+            m_pt_rules.reset();
+            // av: TODO: Safe existing rules?
+            for (datalog::rule *r : pt->m_rules)
+                init_rule(get_context().get_rels(), *r, version);
 
-            pm.formula_v2v(pt->m_transition, tmp, 0, version);
-            transition.push_back(tmp);
-            pm.formula_v2v(pt->m_init, tmp, 0, version);
-            init.push_back(tmp);
-            for (const expr_ref_vector &tc : pt->m_transition_clauses) {
-                expr_ref_vector renamed_tc(m);
-                pm.formulas_v2v(tc, renamed_tc, 0, version);
-                m_transition_clauses.push_back(renamed_tc);
+            for (auto &kv : m_pt_rules) {
+                pt_rule &r = *kv.m_value;
+                std::string name = pt->name().str() + "__tr" + std::to_string(i);
+                func_decl *tag_decl = m.mk_const_decl(symbol(name.c_str()), m.mk_bool_sort());
+                tag_decl = pm.get_n_pred(tag_decl);
+                tag = m.mk_const(tag_decl);
+                m_pt_rules.set_tag(tag, r);
+                transition_clause.push_back(tag);
+                transitions.push_back(m.mk_implies(r.tag(), r.trans()));
+                if (!r.is_init()) {not_inits.push_back(m.mk_not(tag));}
+                const app_ref_vector &app_tags = m_pt_rules.mk_app_tags(pm, r);
+                transitions.push_back(m.mk_implies(tag, mk_and(app_tags)));
+                ++i;
             }
-            m_all_init &= pt->m_all_init;
+
+            transitions.push_back(mk_or(transition_clause));
+            m_transition_clauses.push_back(transition_clause);
         }
     }
-    flatten_and(transition);
-    flatten_and(init);
-    m_transition = mk_and(transition);
-    m_init = mk_and(init);
+
+    flatten_and(transitions);
+    flatten_and(not_inits);
+    m_transition = mk_and(transitions);
+    m_init = mk_and(not_inits);
 
     m_solver->assert_expr (m_transition);
     m_solver->assert_expr (m_init, 0);
+    throw default_exception("Debug stop. Code further uninplemented");
 }
 
 void pred_transformer::merge_child_lemmas(const decls2rel &rels)
@@ -2349,7 +2365,7 @@ void pred_transformer::init_rules(decls2rel const& pts) {
     expr_ref_vector transitions(m), not_inits(m);
     app_ref tag(m);
     for (auto r : m_rules) {
-        init_rule(pts, *r, m_pt_rules);
+        init_rule(pts, *r, 0);
     }
 
     if (m_pt_rules.empty()) {
@@ -2381,7 +2397,7 @@ void pred_transformer::init_rules(decls2rel const& pts) {
 //        if (ctx.use_inc_clause()) {
 //            m_transition_clauses.push_back(transition_clause);
 //        } else {
-            transitions.push_back(mk_or(transition_clause));
+        transitions.push_back(mk_or(transition_clause));
 //        }
         m_transition = mk_and(transitions);
     }
@@ -2402,7 +2418,7 @@ static bool is_all_non_null(app_ref_vector const& apps) {
 #endif
 
 void pred_transformer::init_rule(decls2rel const& pts, datalog::rule const& rule,
-                                    pt_rules& pt_rules) {
+                                    unsigned version) {
     scoped_watch _t_(m_initialize_watch);
 
     // Predicates that are variable representatives. Other predicates at
@@ -2415,13 +2431,13 @@ void pred_transformer::init_rule(decls2rel const& pts, datalog::rule const& rule
     unsigned ut_size = rule.get_uninterpreted_tail_size();
     unsigned t_size  = rule.get_tail_size();
     SASSERT(ut_size <= t_size);
-    init_atom(pts, rule.get_head(), var_reprs, side, UINT_MAX);
+    init_atom(pts, rule.get_head(), var_reprs, side, UINT_MAX, version);
     for (unsigned i = 0; i < ut_size; ++i) {
         if (rule.is_neg_tail(i)) {
             throw default_exception("SPACER does not support "
                                     "negated predicates in rule tails");
         }
-        init_atom(pts, rule.get_tail(i), var_reprs, side, num_pred);
+        init_atom(pts, rule.get_tail(i), var_reprs, side, num_pred, version);
         ++num_pred;
     }
     // -- substitute free variables
@@ -2453,7 +2469,7 @@ void pred_transformer::init_rule(decls2rel const& pts, datalog::rule const& rule
     // allow quantifiers in init rule
     SASSERT(ut_size == 0 || is_ground(trans));
     if (!m.is_false(trans)) {
-        pt_rule &ptr = pt_rules.mk_rule(m, rule);
+        pt_rule &ptr = m_pt_rules.mk_rule(m, rule);
         ptr.set_trans(trans);
         ptr.set_auxs(aux_vars);
         ptr.set_reps(var_reprs);
@@ -2491,11 +2507,13 @@ void pred_transformer::ground_free_vars(expr* e, app_ref_vector& vars,
 // create names for variables used in relations.
 void pred_transformer::init_atom(decls2rel const &pts, app *atom,
                                  app_ref_vector &var_reprs,
-                                 expr_ref_vector &side, unsigned tail_idx) {
+                                 expr_ref_vector &side, unsigned tail_idx, unsigned version) {
     unsigned arity = atom->get_num_args();
     func_decl_multivector head;
     head.push_back({atom->get_decl(), 1});
     pred_transformer& pt = *pts.find(head);
+    //pred_transformer& pt = *this;
+    
     for (unsigned i = 0; i < arity; i++) {
         app_ref rep(m);
 
