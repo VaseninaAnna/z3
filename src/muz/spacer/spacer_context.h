@@ -388,7 +388,7 @@ class pred_transformer {
             p->set_tag(tag);
             m_tags.insert(tag, p);
         }
-        const app_ref_vector &mk_app_tags(manager &pm, pt_rule &v);
+        const app_ref_vector &mk_app_tags(manager &pm, pt_rule &v, unsigned version);
 
         bool empty() {return m_rules.empty();}
         iterator begin() const {return m_rules.begin();}
@@ -493,7 +493,7 @@ class pred_transformer {
     ptr_vector<func_decl>        m_sig;             // signature
     func_decl_ref                m_merged_head;     // predicate representing this transformer in models
     ptr_vector<pred_transformer> m_use;             // places where 'this' is referenced.
-    pt_rules                     m_pt_rules;           // pt rules used to derive transformer
+    pt_rules                     m_pt_rules;        // pt rules used to derive transformer
     ptr_vector<datalog::rule>    m_rules;           // rules used to derive transformer
     occurrence_cache             m_occurrences;     // cache for fast building the dependencies graph
     scoped_ptr<prop_solver>      m_solver;          // solver context
@@ -509,6 +509,8 @@ class pred_transformer {
     app_ref                      m_extend_lit;      // current literal to extend initial state
     bool                         m_all_init;        // true if the pt has no uninterpreted body in any rule
     ptr_vector<func_decl>        m_predicates;      // temp vector used with find_predecessors()
+    unsigned                     m_tail_counter;    // counter of uninterprited symbols over all rules
+    unsigned                     m_pt_size;         // number of pts in merged pt
     stats                        m_stats;
     stopwatch                    m_initialize_watch;
     stopwatch                    m_must_reachable_watch;

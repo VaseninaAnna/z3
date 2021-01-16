@@ -786,16 +786,18 @@ pred_transformer::pt_rule &pred_transformer::pt_rules::mk_rule(const pred_transf
     return *p;
 }
 
-const app_ref_vector &pred_transformer::pt_rules::mk_app_tags(manager &pm, pred_transformer::pt_rule &v)
+const app_ref_vector &pred_transformer::pt_rules::mk_app_tags(manager &pm, pred_transformer::pt_rule &v,
+                                                                    unsigned version)
 {
     const datalog::rule &r = v.rule();
+    unsigned arity = r.get_head()->get_num_args();
     unsigned sz = r.get_uninterpreted_tail_size();
     ast_manager &m = pm.get_manager();
     app_ref_vector app_tags(m);
     app_tags.resize(sz);
     for (unsigned i = 0; i < sz; ++i) {
         func_decl *decl = r.get_tail(i)->get_decl();
-        std::string name = v.rule().get_decl()->get_name().str() + "__app_" + decl->get_name().str() + std::to_string(i);
+        std::string name = v.rule().get_decl()->get_name().str() + "__app_" + decl->get_name().str() + std::to_string(arity * version + i);
         func_decl *tag_decl = m.mk_const_decl(symbol(name.c_str()), m.mk_bool_sort());
         tag_decl = pm.get_n_pred(tag_decl);
         app_tags.set(i, m.mk_const(tag_decl));
@@ -1085,6 +1087,7 @@ void pred_transformer::init_sig()
                 pm.associate(stm, head);
                 ++num_arg;
             }
+            ++m_pt_size;
         }
     }
     m_merged_head = (m_heads.size() == 1 && m_heads[0].count == 1)
@@ -2240,20 +2243,19 @@ void pred_transformer::merge(const vector<std::pair<pred_transformer*, unsigned>
     // init_rules(get_context().get_rels())
     expr_ref_vector transitions(m), not_inits(m);;
     expr_ref_vector init(m);
-    m_all_init = true;
     app_ref tag(m);
 
     unsigned i = 0;
     // av: TODO: push m_extend_lit to clause
     // av: TODO: merge with pt::init_rules after code is complete
+    // av: TODO: add case for m_pt_rules.empty() ?
     for (auto &pair : pts) {
         pred_transformer *pt = pair.first;
         unsigned count = pair.second;
         for (unsigned version = 0; version < count; ++version) {
             expr_ref_vector transition_clause(m);
-            pt_rules pt_rules;
             m_pt_rules.reset();
-            // av: TODO: Safe existing rules?
+            // av: TODO: use deep copy?
             for (datalog::rule *r : pt->m_rules)
                 init_rule(get_context().get_rels(), *r, version);
 
@@ -2267,13 +2269,15 @@ void pred_transformer::merge(const vector<std::pair<pred_transformer*, unsigned>
                 transition_clause.push_back(tag);
                 transitions.push_back(m.mk_implies(r.tag(), r.trans()));
                 if (!r.is_init()) {not_inits.push_back(m.mk_not(tag));}
-                const app_ref_vector &app_tags = m_pt_rules.mk_app_tags(pm, r);
+                const app_ref_vector &app_tags = m_pt_rules.mk_app_tags(pm, r, version);
+                // if (mk_and(app_tags) != m.mk_true())
                 transitions.push_back(m.mk_implies(tag, mk_and(app_tags)));
                 ++i;
             }
 
             transitions.push_back(mk_or(transition_clause));
             m_transition_clauses.push_back(transition_clause);
+
         }
     }
 
@@ -2281,6 +2285,8 @@ void pred_transformer::merge(const vector<std::pair<pred_transformer*, unsigned>
     flatten_and(not_inits);
     m_transition = mk_and(transitions);
     m_init = mk_and(not_inits);
+
+    if (not_inits.empty ()) {m_all_init = true;}
 
     m_solver->assert_expr (m_transition);
     m_solver->assert_expr (m_init, 0);
@@ -2376,7 +2382,7 @@ void pred_transformer::init_rules(decls2rel const& pts) {
     }
     else {
         //SASSERT(m_heads.size() == 1 && m_heads[0].count == 1);
-        static unsigned i = 0;
+        unsigned i = 0;
         expr_ref_vector transitions(m);
         expr_ref_vector transition_clause(m);
         transition_clause.push_back (m_extend_lit->get_arg(0));
@@ -2391,7 +2397,7 @@ void pred_transformer::init_rules(decls2rel const& pts) {
             transition_clause.push_back(tag);
             transitions.push_back(m.mk_implies(r.tag(), r.trans()));
             if (!r.is_init()) {not_inits.push_back(m.mk_not(tag));}
-            const app_ref_vector &app_tags = m_pt_rules.mk_app_tags(pm, r);
+            const app_ref_vector &app_tags = m_pt_rules.mk_app_tags(pm, r, 0);
             transitions.push_back(m.mk_implies(tag, mk_and(app_tags)));
             ++i;
         }
@@ -2428,7 +2434,6 @@ void pred_transformer::init_rule(decls2rel const& pts, datalog::rule const& rule
     expr_ref_vector side(m);
     app_ref_vector var_reprs(m);
     ptr_vector<app> aux_vars;
-    static unsigned num_pred = 0;
 
     unsigned ut_size = rule.get_uninterpreted_tail_size();
     unsigned t_size  = rule.get_tail_size();
@@ -2439,8 +2444,8 @@ void pred_transformer::init_rule(decls2rel const& pts, datalog::rule const& rule
             throw default_exception("SPACER does not support "
                                     "negated predicates in rule tails");
         }
-        init_atom(pts, rule.get_tail(i), var_reprs, side, num_pred, version);
-        ++num_pred;
+        init_atom(pts, rule.get_tail(i), var_reprs, side, m_tail_counter, version);
+        ++m_tail_counter;
     }
     // -- substitute free variables
     expr_ref trans(m);
