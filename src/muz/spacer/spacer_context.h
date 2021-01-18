@@ -340,6 +340,7 @@ class pred_transformer {
         app_ref_vector m_reps;   // map from fv in m_rule to ground constants
         app_ref m_tag;           // a unique tag for the rule
         app_ref_vector m_app_tags; // tags for uninterpreted symbol applications in the body
+        unsigned m_tail_start_idx; // the number of the first uninterpreted atom at a tail 
 
     public:
         pt_rule(ast_manager &m, const datalog::rule &r) :
@@ -494,6 +495,7 @@ class pred_transformer {
     func_decl_ref                m_merged_head;     // predicate representing this transformer in models
     ptr_vector<pred_transformer> m_use;             // places where 'this' is referenced.
     pt_rules                     m_pt_rules;        // pt rules used to derive transformer
+    vector<pt_rules>             m_vpt_rules;       // vector of pt rules for merged pt
     ptr_vector<datalog::rule>    m_rules;           // rules used to derive transformer
     occurrence_cache             m_occurrences;     // cache for fast building the dependencies graph
     scoped_ptr<prop_solver>      m_solver;          // solver context
@@ -615,9 +617,12 @@ public:
                     unsigned& num_reuse_reach,
                     versioned_rule_vector& rules);
     expr* get_transition(datalog::rule const& r) {
-        SASSERT(m_heads.size() == 1 && m_heads[0].count == 1);
-        pt_rule *p;
-        return m_pt_rules.find_by_rule(r, p) ? p->trans() : nullptr;
+        for (auto &pr : m_vpt_rules) {
+            pt_rule *p;
+            if (pr.find_by_rule(r, p))
+                return p->trans();
+        }
+        return nullptr;
     }
     void get_transitions(versioned_rule_vector const& rules, expr_ref_vector &transitions);
     void get_initials(versioned_rule_vector const& rules, model &mdl,

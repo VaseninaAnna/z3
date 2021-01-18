@@ -1191,20 +1191,12 @@ reach_fact *pred_transformer::get_used_origin_rf(model& mdl, const manager::idx_
 void pred_transformer::find_rules(model &model, versioned_rule_vector& rules) {
     SASSERT(rules.empty());
     expr_ref val(m);
-
-    func_decl_set processed_heads;
-    for (auto &cfunc : m_heads) {
-        pred_transformer &pt = ctx.get_pred_transformer(cfunc.func);
-        for (unsigned version = 0; version < cfunc.count; ++version) {
-            for (auto &kv : pt.m_pt_rules) {
-                if (!processed_heads.contains(kv.m_value->rule().get_decl())) {
-                    func_decl *tag = kv.m_value->tag()->get_decl();
-                    tag = pm.get_version_pred(tag, 0, version);
-                    if (model.is_true_decl(tag)) {
-                        rules.push_back({&kv.m_value->rule(), version});
-                        processed_heads.insert(kv.m_value->rule().get_decl());
-                    }
-                }
+    for (auto &r : m_vpt_rules) {
+        for (auto &kv : r) {
+            func_decl *tag = kv.m_value->tag()->get_decl();
+            if (model.is_true_decl(tag)) {
+                rules.push_back({&kv.m_value->rule(), 0});
+                break;
             }
         }
     }
@@ -1221,58 +1213,53 @@ void pred_transformer::find_rules(model &model,
     versioned_func_map<const datalog::rule*> best_rules;
     versioned_func_map<vector<bool>> reach_pred_used_map;
     versioned_func_map<bool> concrete_heads;
+    unsigned tail_counter = 0;
 
     // find a rule whose tag is true in the model;
     // prefer a rule where the model intersects with reach facts of all predecessors;
     // also find how many predecessors' reach facts are true in the model
     expr_ref vl(m);
-    for (auto &cfunc : m_heads) {
-        class pt_rules &pt_rules = ctx.get_pred_transformer(cfunc.func).m_pt_rules;
-        for (unsigned version = 0; version < cfunc.count; ++version) {
-            for (auto &kv : pt_rules) {
-                func_decl *tag = kv.m_value->tag()->get_decl();
-                tag = pm.get_version_pred(tag, 0, version);
-                versioned_func id{kv.m_value->rule().get_decl(), version};
-
-                // dvvrd: TODO: something should be done to repeating heads!
-                if (!concrete_heads.contains(id) &&
-                        model.eval(tag, vl) && m.is_true(vl)) {
-                    const datalog::rule *r = &kv.m_value->rule();
-                    best_rules.insert(id, r);
-                    bool intersects_with_all_rfs = true;
-                    num_reuse_reach = 0;
-                    unsigned tail_sz = r->get_uninterpreted_tail_size();
-                    vector<bool> rpu;
-                    for (unsigned i = 0; i < tail_sz; i++) {
-                        bool used = false;
-                        func_decl* d = r->get_tail(i)->get_decl();
-                        const pred_transformer &pt = ctx.get_pred_transformer(d);
-                        if (!pt.has_rfs()) {intersects_with_all_rfs = false;}
-                        else {
-                            expr_ref v(m);
-                            pm.formula_n2o(pt.get_last_rf_tag (), v, i);
-                            pm.formula_v2v(v, v, 0, version);
-                            model.eval(to_app (v.get ())->get_decl (), vl);
-                            used = m.is_false (vl);
-                            if (!used) {
-                                LOG_STREAM << "app of " << d->get_name() << " in rule for " << r->get_decl()->get_name() << " UNUSED" << std::endl;
-                            } else {
-                                LOG_STREAM << version << ": app of " << mk_pp(v, m) << " in rule for " << r->get_decl()->get_name() << " IS USED" << std::endl;
-                            }
+    for (auto &r : m_vpt_rules) {
+        for (auto &kv : r) {
+            func_decl *tag = kv.m_value->tag()->get_decl();
+            versioned_func id{kv.m_value->rule().get_decl(), 0};
+            if (model.eval(tag, vl) && m.is_true(vl)) {
+                const datalog::rule *r = &kv.m_value->rule();
+                best_rules.insert(id, r);
+                bool intersects_with_all_rfs = true;
+                num_reuse_reach = 0;
+                unsigned tail_sz = r->get_uninterpreted_tail_size();
+                vector<bool> rpu;
+                for (unsigned i = 0; i < tail_sz; i++) {
+                    bool used = false;
+                    func_decl* d = r->get_tail(i)->get_decl();
+                    const pred_transformer &pt = ctx.get_pred_transformer(d);
+                    if (!pt.has_rfs()) {intersects_with_all_rfs = false;}
+                    else {
+                        expr_ref v(m);
+                        pm.formula_n2o(pt.get_last_rf_tag (), v, tail_counter);
+                        model.eval(to_app (v.get ())->get_decl (), vl);
+                        used = m.is_false (vl);
+                        if (!used)
+                            LOG_STREAM << "app of " << d->get_name() << " in rule for " << r->get_decl()->get_name() << " UNUSED" << std::endl;
+                        else
+                            LOG_STREAM << ": app of " << mk_pp(v, m) << " in rule for " << r->get_decl()->get_name() << " IS USED" << std::endl;
                             intersects_with_all_rfs &= used;
-                        }
+                    }
 
-                        rpu.insert(used);
-                        if (used) {num_reuse_reach++;}
-                    }
-                    reach_pred_used_map.insert(id, rpu);
-                    if (intersects_with_all_rfs) {
-                        concrete_heads.insert(id, true);
-                    }
+                    rpu.insert(used);
+                    if (used) {num_reuse_reach++;}
+                    ++tail_counter;
+                }
+                reach_pred_used_map.insert(id, rpu);
+                if (intersects_with_all_rfs) {
+                    concrete_heads.insert(id, true);
+                    break;
                 }
             }
         }
     }
+
     // SASSERT (r);
     for (auto &kv : best_rules) {
         is_concrete.push_back(concrete_heads.contains(kv.m_key));
@@ -1284,17 +1271,14 @@ void pred_transformer::find_rules(model &model,
 void pred_transformer::get_transitions(versioned_rule_vector const& rules,
                                        expr_ref_vector &transitions)
 {
-   for (auto &pair : rules) {
-       const datalog::rule *r = pair.first;
-       unsigned version = pair.second;
-       pred_transformer &pt = ctx.get_pred_transformer(r->get_decl());
-       pt_rule *p;
-       if (pt.m_pt_rules.find_by_rule(*r, p)) {
-           expr_ref trans(m);
-           pm.formula_v2v(p->trans(), trans, 0, version);
-           transitions.push_back(trans);
-       }
-   }
+    for (auto &pair : rules) {
+        const datalog::rule *r = pair.first;
+        for (auto &pr : m_vpt_rules) {
+            pt_rule *p;
+            if (pr.find_by_rule(*r, p))
+                transitions.push_back(p->trans());
+        }
+    }
 }
 
 void pred_transformer::get_initials(const versioned_rule_vector &rules, model &mdl,
@@ -1319,15 +1303,15 @@ void pred_transformer::get_aux_vars(versioned_rule_vector const& rules,
 {
     for (auto &pair : rules) {
         const datalog::rule *r = pair.first;
-        unsigned version = pair.second;
-        pred_transformer &pt = ctx.get_pred_transformer(r->get_decl());
         pt_rule *p = nullptr;
-        VERIFY(pt.m_pt_rules.find_by_rule(*r, p));
-        for (app *aux : p->auxs()) {
-            expr_ref renamed(m);
-            pm.formula_v2v(aux, renamed, 0, version);
-            vars.push_back(to_app(renamed));
+        for (auto &pr : m_vpt_rules) {
+            if (pr.find_by_rule(*r, p)) {
+                for (app *aux : p->auxs())
+                    vars.push_back(aux);
+                break;
+            }
         }
+        SASSERT(p != nullptr);
     }
 }
 
@@ -1338,19 +1322,6 @@ void pred_transformer::find_predecessors(datalog::rule const& r,
     unsigned tail_sz = r.get_uninterpreted_tail_size();
     for (unsigned ti = 0; ti < tail_sz; ti++) {
         preds.push_back(r.get_tail(ti)->get_decl());
-    }
-}
-
-void pred_transformer::find_predecessors(versioned_rule_vector const& rules,
-                                         vector<versioned_func>& preds) const
-{
-    preds.reset();
-    for (auto &pair : rules) {
-        const datalog::rule *r = pair.first;
-        unsigned tail_sz = r->get_uninterpreted_tail_size();
-        for (unsigned ti = 0; ti < tail_sz; ti++) {
-            preds.push_back({r->get_tail(ti)->get_decl(), pair.second});
-        }
     }
 }
 
@@ -1751,13 +1722,12 @@ void pred_transformer::propagate_to_infinity (unsigned level)
 void pred_transformer::get_pred_bg_invs(expr_ref_vector& out) {
     expr_ref inv(m), tmp1(m), tmp2(m);
     ptr_vector<func_decl> preds;
-    for (auto &cfunc : m_heads) {
-        pred_transformer &hpt = ctx.get_pred_transformer(cfunc.func);
-        for (auto &kv : hpt.m_pt_rules) {
+    unsigned tail_counter = 0;
+    for (auto &vr : m_vpt_rules) {
+        for (auto &kv : vr) {
             expr_ref tag(m);
             datalog::rule const &r = kv.m_value->rule();
             find_predecessors (r, preds);
-
             for (unsigned i = 0, preds_sz = preds.size(); i < preds_sz; i++) {
                 func_decl* pre = preds[i];
                 pred_transformer &pt = ctx.get_pred_transformer(pre);
@@ -1766,16 +1736,14 @@ void pred_transformer::get_pred_bg_invs(expr_ref_vector& out) {
                 CTRACE("spacer", !invs.empty(),
                        tout << "add-bg-invariant: " << mk_pp (pre, m) << "\n";);
                 for (auto inv : invs) {
-                    for (unsigned version = 0; version < cfunc.count; ++version) {
-                        pm.formula_v2v(kv.m_value->tag(), tag, 0, version);
-                        // tag -> inv1 ...  tag -> invn
-                        tmp1 = m.mk_implies(tag, inv->get_expr());
-                        pm.formula_n2o(tmp1, tmp2, i);
-                        pm.formula_v2v(tmp2, tmp2, 0, version);
-                        out.push_back(tmp2);
-                        TRACE("spacer", tout << tmp2 << "\n";);
-                    }
+                    tag = kv.m_value->tag();
+                    tmp1 = m.mk_implies(tag, inv->get_expr());
+                    // tag -> inv1 ...  tag -> invn
+                    pm.formula_n2o(tmp1, tmp2, tail_counter);
+                    out.push_back(tmp2);
+                    TRACE("spacer", tout << tmp2 << "\n";);
                 }
+                ++tail_counter;
             }
         }
     }
@@ -1915,28 +1883,24 @@ lbool pred_transformer::is_reachable(pob& n, expr_ref_vector* core,
 
     // populate reach_assumps
     if (n.level () > 0 && !m_all_init) {
-        for (auto &cfunc : m_heads) {
-            pred_transformer &hpt = ctx.get_pred_transformer(cfunc.func);
-            for (auto &kv : hpt.m_pt_rules) {
+        unsigned tail_counter = 0;
+        for (auto &r : m_vpt_rules) {
+            for (auto &kv : r) {
                 find_predecessors(kv.m_value->rule(), m_predicates);
                 if (m_predicates.empty()) {continue;}
                 for (unsigned i = 0; i < m_predicates.size(); i++) {
                     const pred_transformer &pt = ctx.get_pred_transformer(m_predicates[i]);
-                    for (unsigned version = 0; version < cfunc.count; ++version) {
-                        if (pt.has_rfs()) {
-                            LOG_STREAM << pt.name() << " has rfs" << std::endl;
-                            expr_ref a(m);
-                            pm.formula_n2o(pt.get_last_rf_tag(), a, i);
-                            pm.formula_v2v(a, a, 0, version);
-                            reach_assumps.push_back(m.mk_not (a));
-                        } else {
-                            LOG_STREAM << pt.name() << " doesn't have rfs" << std::endl;
-                            expr_ref tag(m);
-                            pm.formula_v2v(kv.m_value->tag(), tag, 0, version);
-                            reach_assumps.push_back(m.mk_not (tag));
-                            break;
-                        }
+                    if (pt.has_rfs()) {
+                        LOG_STREAM << pt.name() << " has rfs" << std::endl;
+                        expr_ref a(m);
+                        pm.formula_n2o(pt.get_last_rf_tag(), a, tail_counter);
+                        reach_assumps.push_back(m.mk_not (a));
+                    } else {
+                        LOG_STREAM << pt.name() << " doesn't have rfs" << std::endl;
+                        reach_assumps.push_back(m.mk_not (kv.m_value->tag()));
+                        break;
                     }
+                    ++tail_counter;
                 }
             }
         }
@@ -2043,20 +2007,20 @@ bool pred_transformer::is_ctp_blocked(lemma *lem) {
         return true;
     }
 
-    vector<versioned_func> preds;
     // -- find predicates along the rule
-    find_predecessors(rules, preds);
-
-    // check if any lemma blocks the ctp model
-    for (unsigned i = 0, sz = preds.size(); i < sz; ++i) {
-        versioned_func &vf = preds.get(i);
-        pred_transformer &pt = ctx.get_pred_transformer(vf.func);
-        expr_ref lemmas(m), val(m);
-        lemmas = pt.get_formulas(lem->level());
-        pm.formula_n2o(lemmas.get(), lemmas, i);
-        pm.formula_v2v(lemmas.get(), lemmas, 0, vf.version);
-        if (ctp->is_false(lemmas)) return false;
+    for (auto &vr : rules) {
+        datalog::rule *r = vr.first;
+        find_predecessors(r, m_predicates)
+        unsigned tail_idx = r.m_tail_start_idx;
+        for (unsigned i = 0, sz = m_predicates.size(); i < sz; ++i) {
+            const pred_transformer &pt = ctx.get_pred_transformer(m_predicates[i]);
+            expr_ref lemmas(m), val(m);
+            lemmas = pt.get_formulas(lem->level());
+            pm.formula_n2o(lemmas.get(), lemmas, tail_idx + i);
+            if (ctp->is_false(lemmas)) return false;
+        }
     }
+
 // dvvrd: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA TODO!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 // dvvrd: TODO: should we check the lemmas for single predicates or for the merged symbols?
 //    func_decl_ptr_vector preds(m);
@@ -2274,6 +2238,7 @@ void pred_transformer::merge(const vector<std::pair<pred_transformer*, unsigned>
                 transitions.push_back(m.mk_implies(tag, mk_and(app_tags)));
                 ++i;
             }
+            m_vpt_rules.push_back(m_pt_rules);
 
             transitions.push_back(mk_or(transition_clause));
             m_transition_clauses.push_back(transition_clause);
@@ -2401,6 +2366,7 @@ void pred_transformer::init_rules(decls2rel const& pts) {
             transitions.push_back(m.mk_implies(tag, mk_and(app_tags)));
             ++i;
         }
+        m_vpt_rules.push_back(m_pt_rules);
 
 //        if (ctx.use_inc_clause()) {
 //            m_transition_clauses.push_back(transition_clause);
@@ -2434,7 +2400,7 @@ void pred_transformer::init_rule(decls2rel const& pts, datalog::rule const& rule
     expr_ref_vector side(m);
     app_ref_vector var_reprs(m);
     ptr_vector<app> aux_vars;
-
+    unsugned tail_start_idx = m_tail_counter;
     unsigned ut_size = rule.get_uninterpreted_tail_size();
     unsigned t_size  = rule.get_tail_size();
     SASSERT(ut_size <= t_size);
@@ -2480,6 +2446,7 @@ void pred_transformer::init_rule(decls2rel const& pts, datalog::rule const& rule
         ptr.set_trans(trans);
         ptr.set_auxs(aux_vars);
         ptr.set_reps(var_reprs);
+        ptr.m_tail_start_idx = tail_start_idx;
     }
 
     // TRACE("spacer",
