@@ -61,10 +61,10 @@ struct append_assumptions {
     }
 };
 
-lbool solver_na2as::check_sat(unsigned num_assumptions, expr * const * assumptions) {
+lbool solver_na2as::check_sat_core(unsigned num_assumptions, expr * const * assumptions) {
     append_assumptions app(m_assumptions, num_assumptions, assumptions);
     TRACE("solver_na2as", display(tout););
-    return check_sat_core(m_assumptions.size(), m_assumptions.c_ptr());
+    return check_sat_core2(m_assumptions.size(), m_assumptions.c_ptr());
 }
 
 lbool solver_na2as::check_sat_cc(const expr_ref_vector &assumptions, vector<expr_ref_vector> const &clauses) {
@@ -83,13 +83,14 @@ lbool solver_na2as::find_mutexes(expr_ref_vector const& vars, vector<expr_ref_ve
 }
 
 
-void solver_na2as::push() {
-    m_scopes.push_back(m_assumptions.size());
+void solver_na2as::push() {    
+    unsigned n = m_assumptions.size();
     push_core();
+    m_scopes.push_back(n);
 }
 
 void solver_na2as::pop(unsigned n) {
-    if (n > 0) {
+    if (n > 0 && !m_scopes.empty()) { 
         unsigned lvl = m_scopes.size();
         n = std::min(lvl, n);
         pop_core(n);

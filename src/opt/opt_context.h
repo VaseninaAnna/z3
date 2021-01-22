@@ -15,8 +15,7 @@ Author:
 Notes:
 
 --*/
-#ifndef OPT_CONTEXT_H_
-#define OPT_CONTEXT_H_
+#pragma once
 
 #include "ast/ast.h"
 #include "ast/arith_decl_plugin.h"
@@ -115,21 +114,25 @@ namespace opt {
             arith_util   m_arith;
             bv_util      m_bv;
             unsigned_vector  m_hard_lim;
+            unsigned_vector  m_asms_lim;
             unsigned_vector  m_objectives_lim;
             unsigned_vector  m_objectives_term_trail;
             unsigned_vector  m_objectives_term_trail_lim;
             map_id           m_indices;
 
         public:
-            expr_ref_vector  m_hard;
+            expr_ref_vector   m_hard;
+            expr_ref_vector   m_asms;
             vector<objective> m_objectives;
 
             scoped_state(ast_manager& m):
                 m(m),
                 m_arith(m),
                 m_bv(m),
-                m_hard(m)
+                m_hard(m),
+                m_asms(m)
             {}
+            unsigned num_scopes() const { return m_hard_lim.size(); }
             void push();
             void pop();
             void add(expr* hard);
@@ -180,8 +183,10 @@ namespace opt {
         unsigned add_soft_constraint(expr* f, rational const& w, symbol const& id);
         unsigned add_objective(app* t, bool is_max);
         void add_hard_constraint(expr* f);
+        void add_hard_constraint(expr* f, expr* t);
         
         void get_hard_constraints(expr_ref_vector& hard);
+        expr_ref_vector get_hard_constraints() { expr_ref_vector hard(m); get_hard_constraints(hard); return hard; }
         expr_ref get_objective(unsigned i);
 
         void push() override;
@@ -189,7 +194,7 @@ namespace opt {
         bool empty() override { return m_scoped_state.m_objectives.empty(); }
         void set_hard_constraints(expr_ref_vector const& hard) override;
         lbool optimize(expr_ref_vector const& asms) override;
-        void set_model(model_ref& _m) override { m_model = _m; }
+        void set_model(model_ref& _m) override;
         void get_model_core(model_ref& _m) override;
         void get_box_model(model_ref& _m, unsigned index) override;
         void fix_model(model_ref& _m) override;
@@ -323,4 +328,3 @@ namespace opt {
 
 }
 
-#endif

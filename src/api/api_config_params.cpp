@@ -24,7 +24,7 @@ Revision History:
 #include "util/symbol.h"
 #include "util/gparams.h"
 #include "util/env_params.h"
-#include "cmd_context/context_params.h"
+#include "params/context_params.h"
 
 extern "C" {
     void Z3_API Z3_global_param_set(Z3_string param_id, Z3_string param_value) {
@@ -48,7 +48,7 @@ extern "C" {
         env_params::updt_params();
     }
 
-    std::string g_Z3_global_param_get_buffer;
+    static std::string g_Z3_global_param_get_buffer;
     
     Z3_bool_opt Z3_API Z3_global_param_get(Z3_string param_id, Z3_string_ptr param_value) {
         memory::initialize(UINT_MAX);

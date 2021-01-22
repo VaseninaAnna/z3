@@ -144,7 +144,7 @@ namespace Microsoft.Z3
                 uint n = Size;
                 BoolExpr[] res = new BoolExpr[n];
                 for (uint i = 0; i < n; i++)
-                    res[i] = new BoolExpr(Context, Native.Z3_goal_formula(Context.nCtx, NativeObject, i));
+                    res[i] = (BoolExpr)Expr.Create(Context, Native.Z3_goal_formula(Context.nCtx, NativeObject, i));
                 return res;
             }
         }
@@ -225,9 +225,9 @@ namespace Microsoft.Z3
         /// Goal to DIMACS formatted string conversion.
         /// </summary>
         /// <returns>A string representation of the Goal.</returns>
-        public string ToDimacs()
+        public string ToDimacs(bool include_names = true)
         {
-            return Native.Z3_goal_to_dimacs_string(Context.nCtx, NativeObject);
+            return Native.Z3_goal_to_dimacs_string(Context.nCtx, NativeObject, (byte)(include_names ? 1 : 0));
         }
 
         /// <summary>

@@ -44,6 +44,7 @@ class bounded_int2bv_solver : public solver_na2as {
     mutable obj_map<func_decl, rational>   m_bv2offset;
     mutable bv2int_rewriter_ctx   m_rewriter_ctx;
     mutable bv2int_rewriter_star  m_rewriter;
+    mutable bool                  m_flushed;
 
 public:
 
@@ -56,8 +57,9 @@ public:
         m_solver(s),
         m_bv_fns(m),
         m_int_fns(m),
-        m_rewriter_ctx(m, p),
-        m_rewriter(m, m_rewriter_ctx)
+        m_rewriter_ctx(m, p, p.get_uint("max_bv_size", UINT_MAX)),
+        m_rewriter(m, m_rewriter_ctx),
+        m_flushed(false)
     {
         solver::updt_params(p);
         m_bounds.push_back(alloc(bound_manager, m));
@@ -80,6 +82,7 @@ public:
         for (func_decl* f : m_bv_fns) result->m_bv_fns.push_back(tr(f));
         for (func_decl* f : m_int_fns) result->m_int_fns.push_back(tr(f));
         for (bound_manager* b : m_bounds) result->m_bounds.push_back(b->translate(dst_m));
+        result->m_flushed = true;
         model_converter_ref mc = external_model_converter();
         if (mc) {
             ast_translation tr(m, dst_m);
@@ -137,9 +140,9 @@ public:
         }
     }
 
-    lbool check_sat_core(unsigned num_assumptions, expr * const * assumptions) override {
+    lbool check_sat_core2(unsigned num_assumptions, expr * const * assumptions) override {
         flush_assertions();
-        return m_solver->check_sat(num_assumptions, assumptions);
+        return m_solver->check_sat_core(num_assumptions, assumptions);
     }
 
     void updt_params(params_ref const & p) override { solver::updt_params(p); m_solver->updt_params(p);  }
@@ -155,6 +158,13 @@ public:
             if (mc) (*mc)(mdl);
         }
     }
+    void get_levels(ptr_vector<expr> const& vars, unsigned_vector& depth) override {
+        m_solver->get_levels(vars, depth);
+    }
+    expr_ref_vector get_trail() override {
+        return m_solver->get_trail();
+    }
+
     model_converter* external_model_converter() const {
         return concat(mc0(), local_model_converter());
     }
@@ -242,7 +252,7 @@ private:
             SASSERT(is_uninterp_const(e));
             func_decl* f = to_app(e)->get_decl();
 
-            if (bm.has_lower(e, lo, s1) && bm.has_upper(e, hi, s2) && lo <= hi && !s1 && !s2) {
+            if (bm.has_lower(e, lo, s1) && bm.has_upper(e, hi, s2) && lo <= hi && !s1 && !s2 && m_arith.is_int(e)) {
                 func_decl* fbv;
                 rational offset;
                 if (!m_int2bv.find(f, fbv)) {
@@ -302,6 +312,7 @@ private:
 
     void flush_assertions() const {
         if (m_assertions.empty()) return;
+        m_flushed = true;
         bound_manager& bm = *m_bounds.back();
         for (expr* a : m_assertions) {
             bm(a);
@@ -318,7 +329,7 @@ private:
             for (expr* a : m_assertions) {
                 sub(a, fml1);
                 m_rewriter(fml1, fml2, proof);
-                if (m.canceled()) {
+                if (!m.inc()) {
                     m_rewriter.reset();
                     return;
                 }
@@ -331,15 +342,24 @@ private:
     }
 
     unsigned get_num_assertions() const override {
-        flush_assertions();
-        return m_solver->get_num_assertions();
+        if (m_flushed) {
+            flush_assertions();
+            return m_solver->get_num_assertions();
+        }
+        else {
+            return m_assertions.size();
+        }
     }
 
     expr * get_assertion(unsigned idx) const override {
-        flush_assertions();
-        return m_solver->get_assertion(idx);
+        if (m_flushed) {
+            flush_assertions();
+            return m_solver->get_assertion(idx);
+        }
+        else {
+            return m_assertions.get(idx);
+        }
     }
-
 };
 
 solver * mk_bounded_int2bv_solver(ast_manager & m, params_ref const & p, solver* s) {

@@ -16,8 +16,7 @@ Author:
 Revision History:
 
 --*/
-#ifndef UINT_SET_H_
-#define UINT_SET_H_
+#pragma once
 
 #include "util/util.h"
 #include "util/vector.h"
@@ -28,16 +27,6 @@ class uint_set : unsigned_vector {
 public:
     
     typedef unsigned data;
-
-    uint_set() {}
-
-    uint_set(const uint_set & source) {
-        for (unsigned i = 0; i < source.size(); ++i) {
-            push_back(source[i]);
-        }
-    }
-
-    ~uint_set() {}
 
     void swap(uint_set & other) {
         unsigned_vector::swap(other);
@@ -209,12 +198,6 @@ public:
         bool operator!=(iterator const& it) const { return m_index != it.m_index; }
         iterator & operator++() { ++m_index; scan(); return *this; }
         iterator operator++(int) { iterator tmp = *this; ++*this; return tmp; }
-        iterator & operator=(iterator const& other) { 
-            m_set = other.m_set;
-            m_index = other.m_index;
-            m_last = other.m_last;
-            return *this;
-        }
     };
 
     iterator const begin() const { return iterator(*this, false); }
@@ -276,12 +259,6 @@ public:
             m_set[i] = m_set.back();
             m_set.pop_back();
         }
-    }
-    
-    tracked_uint_set& operator=(tracked_uint_set const& other) {
-        m_in_set = other.m_in_set;
-        m_set = other.m_set;
-        return *this;
     }
     
     bool contains(unsigned v) const {
@@ -364,6 +341,11 @@ public:
         SASSERT(!contains(x));
     }
 
+    unsigned elem_at(unsigned index) {
+        SASSERT(index < m_size);
+        return m_elems[index];
+    }
+
     bool contains(unsigned x) const { return x < m_index.size() && m_index[x] < m_size && m_elems[m_index[x]] == x; }
     void reset() { m_size = 0; }
     bool empty() const { return m_size == 0; }    
@@ -372,8 +354,10 @@ public:
     typedef  unsigned_vector::const_iterator iterator;
     iterator begin() const { return m_elems.begin(); }
     iterator end() const { return m_elems.begin() + m_size; }
-
+    
 };
 
-#endif /* UINT_SET_H_ */
-
+inline std::ostream& operator<<(std::ostream& out, indexed_uint_set const& s) {
+    for (unsigned i : s) out << i << " ";
+    return out;
+}

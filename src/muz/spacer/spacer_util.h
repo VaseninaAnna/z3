@@ -19,8 +19,7 @@ Revision History:
 
 --*/
 
-#ifndef _SPACER_UTIL_H_
-#define _SPACER_UTIL_H_
+#pragma once
 
 #include "ast/ast.h"
 #include "ast/ast_pp.h"
@@ -107,9 +106,8 @@ namespace spacer {
 
     // TBD: sort out
     void expand_literals(ast_manager &m, expr_ref_vector& conjs);
-    void compute_implicant_literals(model &mdl,
-                                    expr_ref_vector &formula,
-                                    expr_ref_vector &res);
+    expr_ref_vector compute_implicant_literals(model &mdl,
+                                    expr_ref_vector &formula);
     void simplify_bounds (expr_ref_vector &lemmas);
     void normalize(expr *e, expr_ref &out, bool use_simplify_bounds = true, bool factor_eqs = false);
 
@@ -184,9 +182,11 @@ namespace spacer {
     typedef default_eq<func_decl_multivector> func_decl_multivector_eq;
 
     comparison_result compare_func_multivectors(const func_decl_multivector &v1, const func_decl_multivector &v2);
+    bool is_clause(ast_manager &m, expr *n); 
+    bool is_literal(ast_manager &m, expr *n);
+    bool is_atom(ast_manager &m, expr *n);
 
     // set f to true in model
     void set_true_in_mdl(model &model, func_decl *f);
 }
 
-#endif

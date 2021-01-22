@@ -225,6 +225,15 @@ try:
 
     website_dox_substitutions = {}
     bullet_point_prefix='\n   - '
+    website_dox_substitutions['CPP_API'] = (
+            '{prefix}<a class="el" href="namespacez3.html">C++ API</a> '
+            ).format(
+                prefix=bullet_point_prefix)
+    website_dox_substitutions['C_API'] = (
+            '{prefix}<a class="el" href="z3__api_8h.html">C API</a> '
+            ).format(
+                prefix=bullet_point_prefix)
+    
     if Z3PY_ENABLED:
         print("Python documentation enabled")
         website_dox_substitutions['PYTHON_API'] = (
@@ -317,7 +326,7 @@ try:
     if ML_ENABLED:
         ml_output_dir = os.path.join(OUTPUT_DIRECTORY, 'html', 'ml')
         mk_dir(ml_output_dir)
-        if subprocess.call(['ocamldoc', '-html', '-d', ml_output_dir, '-sort', '-hide', 'Z3', '-I', '%s/api/ml' % BUILD_DIR, '%s/api/ml/z3enums.mli' % BUILD_DIR, '%s/api/ml/z3.mli' % BUILD_DIR]) != 0:
+        if subprocess.call(['ocamldoc', '-html', '-d', ml_output_dir, '-sort', '-hide', 'Z3', '-I', '+zarith', '-I', '%s/api/ml' % BUILD_DIR, '%s/api/ml/z3enums.mli' % BUILD_DIR, '%s/api/ml/z3.mli' % BUILD_DIR]) != 0:
             print("ERROR: ocamldoc failed.")
             exit(1)
         print("Generated ML/OCaml documentation.")

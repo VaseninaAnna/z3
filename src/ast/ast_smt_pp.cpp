@@ -24,6 +24,7 @@ Revision History:
 #include "util/vector.h"
 #include "util/smt2_util.h"
 #include "ast/ast_smt_pp.h"
+#include "ast/ast_smt2_pp.h"
 #include "ast/arith_decl_plugin.h"
 #include "ast/bv_decl_plugin.h"
 #include "ast/array_decl_plugin.h"
@@ -32,6 +33,8 @@ Revision History:
 #include "ast/fpa_decl_plugin.h"
 #include "ast/for_each_ast.h"
 #include "ast/decl_collector.h"
+#include "math/polynomial/algebraic_numbers.h"
+
 
 // ---------------------------------------
 // smt_renaming
@@ -45,7 +48,7 @@ symbol smt_renaming::fix_symbol(symbol s, int k) {
     std::ostringstream buffer;
     char const * data = s.is_numerical() ? "" : s.bare_str();
 
-    if (k == 0 && *data) {
+    if (k == 0 && data && *data) {
         if (s.is_numerical()) {
             return s;
         }
@@ -59,7 +62,7 @@ symbol smt_renaming::fix_symbol(symbol s, int k) {
 
     if (s.is_numerical()) {
         buffer << s << k;
-        return symbol(buffer.str().c_str());
+        return symbol(buffer.str());
     }
 
     if (!s.bare_str()) {
@@ -75,7 +78,7 @@ symbol smt_renaming::fix_symbol(symbol s, int k) {
         buffer << "!" << k;
     }
 
-    return symbol(buffer.str().c_str());
+    return symbol(buffer.str());
 }
 
 bool smt_renaming::is_legal(char c) {
@@ -223,7 +226,7 @@ class smt_printer {
             }
         }
         else if (m_manager.is_ite(d)) {
-            m_out << "ite";            
+            m_out << "ite";
         }
         else if (m_manager.is_implies(d)) {
             m_out << "=>";
@@ -266,7 +269,7 @@ class smt_printer {
         else {
             m_out << "(_ " << sym << " ";
         }
-        
+
         for (unsigned i = 0; i < num_params; ++i) {
             parameter const& p = params[i];
             if (p.is_ast()) {
@@ -320,7 +323,7 @@ class smt_printer {
             if (num_sorts > 0) {
                 m_out << "(";
             }
-            m_out << m_renaming.get_symbol(s->get_name(), false);            
+            m_out << m_renaming.get_symbol(s->get_name(), false);
             if (num_sorts > 0) {
                 for (unsigned i = 0; i < num_sorts; ++i) {
                     m_out << " ";
@@ -371,6 +374,12 @@ class smt_printer {
                 display_rational(val, is_int);
             }
         }
+        else if (m_autil.is_irrational_algebraic_numeral(n)) {
+            anum const & aval = m_autil.to_irrational_algebraic_numeral(n);
+            std::ostringstream buffer;
+            m_autil.am().display_root_smt2(buffer, aval);            
+            m_out << buffer.str();
+        }
         else if (m_sutil.str.is_string(n, s)) {
             std::string encs = s.encode();
             m_out << "\"";
@@ -388,10 +397,7 @@ class smt_printer {
             m_out << "(_ bv" << val << " " << bv_size << ")";
         }
         else if (m_futil.is_numeral(n, float_val)) {
-            m_out << "((_ to_fp " <<
-                float_val.get().get_ebits() << " " <<
-                float_val.get().get_sbits() << ") RTZ " <<
-                m_futil.fm().to_string(float_val).c_str() << ")";
+            m_out << mk_ismt2_pp(n, m_manager);
         }
         else if (m_bvutil.is_bit2bool(n)) {
             unsigned bit = n->get_decl()->get_parameter(0).get_int();
@@ -402,7 +408,7 @@ class smt_printer {
         else if (m_manager.is_label(n, pos, names) && !names.empty()) {
             m_out << "(! ";
             pp_marked_expr(n->get_arg(0));
-            m_out << (pos?":lblpos":":lblneg") << " " << m_renaming.get_symbol(names[0], false) << ")";            
+            m_out << (pos?":lblpos":":lblneg") << " " << m_renaming.get_symbol(names[0], false) << ")";
         }
         else if (m_manager.is_label_lit(n, names) && !names.empty()) {
             m_out << "(! true :lblpos " << m_renaming.get_symbol(names[0], false) << ")";
@@ -435,7 +441,7 @@ class smt_printer {
             pp_arg(curr, n);
             m_out << ")";
 
-        } 
+        }
         else if (m_manager.is_distinct(decl)) {
             ptr_vector<expr> args(num_args, n->get_args());
             unsigned         idx = 0;
@@ -613,7 +619,7 @@ class smt_printer {
         pp_id(n);
         m_out << " ";
         pp_expr(n);
-        m_out << ")";        
+        m_out << ")";
         m_out << ")";
         newline();
     }
@@ -666,7 +672,7 @@ class smt_printer {
             if (s.is_numerical()) {
                 sz += 7;
             }
-            else {
+            else if (s.bare_str()) {
                 sz += 3 + static_cast<unsigned>(strlen(s.bare_str()));
             }
             for (unsigned i = 0; i < a->get_num_args() && sz <= m_line_length; ++i) {
@@ -781,26 +787,32 @@ public:
         datatype_util util(m_manager);
         SASSERT(util.is_datatype(s));
 
-        sort_ref_vector ps(m_manager);        
+        sort_ref_vector ps(m_manager);
         ptr_vector<datatype::def> defs;
         util.get_defs(s, defs);
 
+        unsigned j = 0;
         for (datatype::def* d : defs) {
             sort_ref sr = d->instantiate(ps);
-            if (mark.is_marked(sr)) return; // already processed
+            if (mark.is_marked(sr)) 
+                continue;
             mark.mark(sr, true);
+            defs[j++] = d;
         }
-                
+        defs.shrink(j);
+        if (defs.empty())
+            return;
+        
         m_out << "(declare-datatypes (";
         bool first_def = true;
         for (datatype::def* d : defs) {
             if (!first_def) m_out << "\n    "; else first_def = false;
-            m_out << "(" << d->name() << " " << d->params().size() << ")";
+            m_out << "(" << ensure_quote(d->name()) << " " << d->params().size() << ")";
         }
         m_out << ") (";
         bool first_sort = true;
         for (datatype::def* d : defs) {
-            if (!first_sort) m_out << "\n   "; else first_sort = false; 
+            if (!first_sort) m_out << "\n   "; else first_sort = false;
             if (!d->params().empty()) {
                 m_out << "(par (";
                 bool first_param = true;
@@ -814,7 +826,7 @@ public:
             bool first_constr = true;
             for (datatype::constructor* f : *d) {
                 if (!first_constr) m_out << " "; else first_constr = false;
-                m_out << "(";                
+                m_out << "(";
                 m_out << m_renaming.get_symbol(f->name(), false);
                 for (datatype::accessor* a : *f) {
                     m_out << " (" << m_renaming.get_symbol(a->name(), false) << " ";
@@ -828,7 +840,7 @@ public:
             }
             m_out << ")";
         }
-        m_out << "))";     
+        m_out << "))";
         newline();
     }
 
@@ -843,7 +855,7 @@ public:
         else {
             m_out << "(declare-sort ";
             visit_sort(s);
-            m_out << ")";
+            m_out << " 0)";
             newline();
         }
         mark.mark(s, true);
@@ -864,7 +876,7 @@ public:
         }
         m_out << ") ";
         visit_sort(d->get_range());
-        m_out << ")";       
+        m_out << ")";
     }
 
     void visit_pred(func_decl* d) {
@@ -919,6 +931,14 @@ void ast_smt_pp::display_ast_smt2(std::ostream& strm, ast* a, unsigned indent, u
     }
 }
 
+void ast_smt_pp::display_sort_decl(std::ostream& out, sort* s, ast_mark& seen) {
+    ptr_vector<quantifier> ql;
+    smt_renaming rn;
+    smt_printer p(out, m_manager, ql, rn, m_logic, false, m_simplify_implies, 0, 0, nullptr);
+    p.pp_sort_decl(seen, s);
+}
+
+
 
 void ast_smt_pp::display_smt2(std::ostream& strm, expr* n) {
     ptr_vector<quantifier> ql;
@@ -926,11 +946,11 @@ void ast_smt_pp::display_smt2(std::ostream& strm, expr* n) {
     decl_collector decls(m);
     smt_renaming rn;
 
-    for (unsigned i = 0; i < m_assumptions.size(); ++i) {
-        decls.visit(m_assumptions[i].get());
+    for (expr* a : m_assumptions) {
+        decls.visit(a);
     }
-    for (unsigned i = 0; i < m_assumptions_star.size(); ++i) {
-        decls.visit(m_assumptions_star[i].get());
+    for (expr* a : m_assumptions_star) {
+        decls.visit(a);
     }
     decls.visit(n);
 
@@ -953,16 +973,15 @@ void ast_smt_pp::display_smt2(std::ostream& strm, expr* n) {
         strm << "(set-logic " << m_logic << ")\n";
     }
     if (!m_attributes.empty()) {
-        strm << "; " << m_attributes.c_str();
+        strm << "; " << m_attributes;
     }
 
 #if 0
     decls.display_decls(strm);
 #else
-    decls.order_deps();
+    decls.order_deps(0);
     ast_mark sort_mark;
-    for (unsigned i = 0; i < decls.get_num_sorts(); ++i) {
-        sort* s = decls.get_sorts()[i];
+    for (sort* s : decls.get_sorts()) {
         if (!(*m_is_declared)(s)) {
             smt_printer p(strm, m, ql, rn, m_logic, true, true, m_simplify_implies, 0);
             p.pp_sort_decl(sort_mark, s);

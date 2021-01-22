@@ -25,13 +25,13 @@ Author:
 Revision History:
 
 --*/
-#ifndef CHASHTABLE_H_
-#define CHASHTABLE_H_
+#pragma once
 
 #include "util/memory_manager.h"
 #include "util/debug.h"
 #include "util/trace.h"
 #include "util/tptr.h"
+#include "util/util.h"
 #ifdef Z3DEBUG
 #include "util/hashtable.h"
 #endif
@@ -279,6 +279,28 @@ public:
 
     unsigned used_slots() const {
         return m_used_slots;
+    }
+
+    void insert_fresh(T const& d) {
+        if (!has_free_cells()) {
+            expand_table();
+        }
+        unsigned mask = m_slots - 1;
+        unsigned h    = get_hash(d);
+        unsigned idx  = h & mask;
+        cell * c      = m_table + idx;
+        cell * new_c  = nullptr;
+        m_size++;
+        if (c->is_free()) {
+            m_used_slots++;
+        }
+        else {
+            new_c = get_free_cell();
+            *new_c = *c;
+        }
+        c->m_next = new_c;
+        c->m_data = d;
+        CASSERT("chashtable_bug", check_invariant());
     }
     
     void insert(T const & d) {
@@ -680,4 +702,3 @@ public:
     }
 };
 
-#endif

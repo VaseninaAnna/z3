@@ -32,7 +32,7 @@ namespace recfun {
     enum op_kind {
         OP_FUN_DEFINED, // defined function with one or more cases, possibly recursive
         OP_FUN_CASE_PRED, // predicate guarding a given control flow path
-        OP_DEPTH_LIMIT, // predicate enforcing some depth limit
+        OP_NUM_ROUNDS     // predicate round
     };
 
     /*! A predicate `p(t1...tn)`, that, if true, means `f(t1...tn)` is following
@@ -47,6 +47,7 @@ namespace recfun {
 
     class replace {
     public:
+        virtual ~replace() {}
         virtual void reset() = 0;
         virtual void insert(expr* d, expr* r) = 0;
         virtual expr_ref operator()(expr* e) = 0;
@@ -56,7 +57,7 @@ namespace recfun {
         friend class def;
         func_decl_ref       m_pred; //<! predicate used for this case
         expr_ref_vector     m_guards; //<! conjunction that is equivalent to this case
-        expr_ref            m_rhs; //<! if guard is true, `f(t1…tn) = rhs` holds
+        expr_ref            m_rhs; //<! if guard is true, `f(t1...tn) = rhs` holds
         def *               m_def; //<! definition this is a part of
         bool                m_immediate; //<! does `rhs` contain no defined_fun/case_pred?
 
@@ -108,13 +109,14 @@ namespace recfun {
         expr_ref            m_rhs;  //!< definition
         family_id           m_fid;
 
-        def(ast_manager &m, family_id fid, symbol const & s, unsigned arity, sort *const * domain, sort* range);
+        def(ast_manager &m, family_id fid, symbol const & s, unsigned arity, sort *const * domain, sort* range, bool is_generated);
 
         // compute cases for a function, given its RHS (possibly containing `ite`).
-        void compute_cases(replace& subst, is_immediate_pred &, 
+        void compute_cases(util& u, replace& subst, is_immediate_pred &, 
                            unsigned n_vars, var *const * vars, expr* rhs);
         void add_case(std::string & name, unsigned case_index, expr_ref_vector const& conditions, expr* rhs, bool is_imm = false);
-        bool contains_ite(expr* e); // expression contains a test?
+        bool contains_ite(util& u, expr* e); // expression contains a test over a def?
+        bool contains_def(util& u, expr* e); // expression contains a def
     public:
         symbol const & get_name() const { return m_name; }
         vars const & get_vars() const { return m_vars; }
@@ -147,12 +149,16 @@ namespace recfun {
         class plugin : public decl_plugin {
             typedef obj_map<func_decl, def*> def_map;
             typedef obj_map<func_decl, case_def*> case_def_map;
+            
 
             mutable scoped_ptr<util> m_util;
             def_map                  m_defs;       // function->def
             case_def_map             m_case_defs;  // case_pred->def
             
             ast_manager & m() { return *m_manager; }
+
+            void compute_scores(expr* e, obj_map<expr, unsigned>& scores);
+
         public:
             plugin();
             ~plugin() override;
@@ -171,7 +177,9 @@ namespace recfun {
             func_decl * mk_func_decl(decl_kind k, unsigned num_parameters, parameter const * parameters, 
                                      unsigned arity, sort * const * domain, sort * range) override;
             
-            promise_def mk_def(symbol const& name, unsigned n, sort *const * params, sort * range);
+            promise_def mk_def(symbol const& name, unsigned n, sort *const * params, sort * range, bool is_generated = false);
+
+            promise_def ensure_def(symbol const& name, unsigned n, sort *const * params, sort * range, bool is_generated = false);
             
             void set_definition(replace& r, promise_def & d, unsigned n_vars, var * const * vars, expr * rhs);
             
@@ -190,10 +198,13 @@ namespace recfun {
                 for (auto& kv : m_defs) result.push_back(kv.m_key);
                 return result;
             }
+
+            expr_ref redirect_ite(replace& subst, unsigned n, var * const* vars, expr * e);
+
         };
     }
 
-    // Varus utils for recursive functions
+    // Various utils for recursive functions
     class util {
         friend class decl::plugin;
         
@@ -209,23 +220,28 @@ namespace recfun {
         ~util();
 
         ast_manager & m() { return m_manager; }
+        family_id get_family_id() const { return m_fid; }
         decl::plugin& get_plugin() { return *m_plugin; }
 
         bool is_case_pred(expr * e) const { return is_app_of(e, m_fid, OP_FUN_CASE_PRED); }
         bool is_defined(expr * e) const { return is_app_of(e, m_fid, OP_FUN_DEFINED); }
         bool is_defined(func_decl* f) const { return is_decl_of(f, m_fid, OP_FUN_DEFINED); }
-        bool is_depth_limit(expr * e) const { return is_app_of(e, m_fid, OP_DEPTH_LIMIT); }
+        bool is_generated(func_decl* f) const { return is_defined(f) && f->get_parameter(0).get_int() == 1; }
+        bool is_num_rounds(expr * e) const { return is_app_of(e, m_fid, OP_NUM_ROUNDS); }
         bool owns_app(app * e) const { return e->get_family_id() == m_fid; }
 
         //<! don't use native theory if recursive function declarations are not populated with defs
         bool has_defs() const { return m_plugin->has_defs(); }
 
         //<! add a function declaration
-        def * decl_fun(symbol const & s, unsigned n_args, sort *const * args, sort * range);
+        def * decl_fun(symbol const & s, unsigned n_args, sort *const * args, sort * range, bool is_generated);
 
+        bool has_def(func_decl* f) const {
+            return m_plugin->has_def(f);
+        }
 
         def& get_def(func_decl* f) {
-            SASSERT(m_plugin->has_def(f));
+            SASSERT(has_def(f));
             return m_plugin->get_def(f);
         }
 
@@ -246,7 +262,7 @@ namespace recfun {
             return m_plugin->get_rec_funs();
         }
 
-        app_ref mk_depth_limit_pred(unsigned d);
+        app_ref mk_num_rounds_pred(unsigned d);
 
     };
 }

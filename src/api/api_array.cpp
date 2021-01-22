@@ -53,6 +53,8 @@ extern "C" {
         LOG_Z3_mk_select(c, a, i);
         RESET_ERROR_CODE();
         ast_manager & m = mk_c(c)->m();
+        CHECK_IS_EXPR(a, nullptr);
+        CHECK_IS_EXPR(i, nullptr);
         expr * _a        = to_expr(a);
         expr * _i        = to_expr(i);
         sort * a_ty = m.get_sort(_a);
@@ -76,10 +78,9 @@ extern "C" {
         LOG_Z3_mk_select_n(c, a, n, idxs);
         RESET_ERROR_CODE();
         ast_manager & m = mk_c(c)->m();
+        CHECK_IS_EXPR(a, nullptr);
         expr * _a        = to_expr(a);
-        // expr * _i        = to_expr(i);
         sort * a_ty = m.get_sort(_a);
-        // sort * i_ty = m.get_sort(_i);
         if (a_ty->get_family_id() != mk_c(c)->get_array_fid()) {
             SET_ERROR_CODE(Z3_SORT_ERROR, nullptr);
             RETURN_Z3(nullptr);
@@ -89,6 +90,7 @@ extern "C" {
         args.push_back(_a);
         domain.push_back(a_ty);
         for (unsigned i = 0; i < n; ++i) {
+            CHECK_IS_EXPR(idxs[i], nullptr);
             args.push_back(to_expr(idxs[i]));
             domain.push_back(m.get_sort(to_expr(idxs[i])));
         }
@@ -106,6 +108,9 @@ extern "C" {
         LOG_Z3_mk_store(c, a, i, v);
         RESET_ERROR_CODE();
         ast_manager & m = mk_c(c)->m();
+        CHECK_IS_EXPR(a, nullptr);
+        CHECK_IS_EXPR(i, nullptr);
+        CHECK_IS_EXPR(v, nullptr);
         expr * _a        = to_expr(a);
         expr * _i        = to_expr(i);
         expr * _v        = to_expr(v);
@@ -168,7 +173,7 @@ extern "C" {
         }
         ast_manager & m = mk_c(c)->m();
         func_decl* _f      = to_func_decl(f);
-        expr* const* _args = to_exprs(args);
+        expr* const* _args = to_exprs(n, args);
 
         ptr_vector<sort> domain;
         for (unsigned i = 0; i < n; ++i) {
@@ -263,6 +268,7 @@ extern "C" {
     MK_UNARY(Z3_mk_set_complement, mk_c(c)->get_array_fid(), OP_SET_COMPLEMENT, SKIP);
     MK_BINARY(Z3_mk_set_subset, mk_c(c)->get_array_fid(), OP_SET_SUBSET, SKIP);
     MK_BINARY(Z3_mk_array_ext, mk_c(c)->get_array_fid(), OP_ARRAY_EXT, SKIP);
+    MK_BINARY(Z3_mk_set_has_size, mk_c(c)->get_array_fid(), OP_SET_HAS_SIZE, SKIP);
 
     Z3_ast Z3_API Z3_mk_as_array(Z3_context c, Z3_func_decl f) {
         Z3_TRY;
