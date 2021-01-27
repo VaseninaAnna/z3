@@ -1064,7 +1064,7 @@ pred_transformer::pred_transformer(context& ctx, manager& pm, func_decl_multivec
     m_frames(*this),
     m_reach_facts(),
     m_reach_fmls(m),
-    m_transition(m), m_init(m),
+    m_transition(m), m_trans_test(m), m_init(m),
     m_extend_lit0(m), m_extend_lit(m),
     m_all_init(false)
 {
@@ -2355,7 +2355,7 @@ void pred_transformer::merge(const vector<std::pair<pred_transformer*, unsigned>
         unsigned count = pair.second;
         for (unsigned version = 0; version < count; ++version) {
             expr_ref tmp(m);
-            pm.formula_v2v(pt->m_transition, tmp, 0, real_version);
+            pm.formula_v2v(pt->m_trans_test, tmp, 0, real_version);
             transition.push_back(tmp);
             pm.formula_v2v(pt->m_init, tmp, 0, real_version);
             init.push_back(tmp);
@@ -2376,7 +2376,7 @@ void pred_transformer::merge(const vector<std::pair<pred_transformer*, unsigned>
     flatten_and(transition);
     flatten_and(init);
     m_transition = mk_and(transition);
-    m_transition = mk_or(m_transition, conj);
+    // m_transition = m.mk_or(m_transition, conj);
     m_init = mk_and(init);
 
     m_solver->assert_expr (m_transition);
@@ -2476,7 +2476,7 @@ void pred_transformer::init_rules(decls2rel const& pts) {
         unsigned i = 0;
         expr_ref_vector transitions(m);
         expr_ref_vector transition_clause(m);
-        transition_clause.push_back (m_extend_lit->get_arg(0));
+        expr_ref_vector transitions_test(m);
         func_decl *head = m_heads[0].func;
         for (auto &kv : m_pt_rules) {
             pt_rule &r = *kv.m_value;
@@ -2487,16 +2487,23 @@ void pred_transformer::init_rules(decls2rel const& pts) {
             m_pt_rules.set_tag(tag, r);
             transition_clause.push_back(tag);
             transitions.push_back(m.mk_implies(r.tag(), r.trans()));
+            transitions_test.push_back(m.mk_implies(r.tag(), r.trans()));
             if (!r.is_init()) {not_inits.push_back(m.mk_not(tag));}
             const app_ref_vector &app_tags = m_pt_rules.mk_app_tags(pm, r);
             transitions.push_back(m.mk_implies(tag, mk_and(app_tags)));
+            transitions_test.push_back(m.mk_implies(tag, mk_and(app_tags)));
             ++i;
         }
 
 //        if (ctx.use_inc_clause()) {
 //            m_transition_clauses.push_back(transition_clause);
 //        } else {
-            transitions.push_back(mk_or(transition_clause));
+        
+        transitions_test.push_back(mk_or(transition_clause));
+        m_trans_test = mk_and(transitions_test);
+
+        transition_clause.push_back (m_extend_lit->get_arg(0));
+        transitions.push_back(mk_or(transition_clause));
 //        }
         m_transition = mk_and(transitions);
     }
@@ -4329,40 +4336,40 @@ lbool context::expand_pob(pob& n, pob_ref_buffer &out)
         // update stats
         m_stats.m_num_reuse_reach += num_reuse_reach;
 
-        bool all_rules_covered = rules.size() == n.pt().heads().size();
+        // bool all_rules_covered = rules.size() == n.pt().heads().size();
         bool is_concretely_reachable = true;
-        for (unsigned i = 0; i < rules.size(); ++i) {
-            const datalog::rule *r = rules[i].first;
-            is_concretely_reachable &= is_concrete[i];
-            if (is_concrete[i] && r && r->get_uninterpreted_tail_size() > 0) {
-                // -- update must summary
-                pred_transformer &rf_pt = get_pred_transformer(r->get_decl());
-                reach_fact_ref rf = rf_pt.mk_rf (n, *model, *r, rules[i].second);
-                checkpoint ();
-                rf_pt.add_rf (rf.get ());
-                checkpoint ();
-            }
-        }
         // for (unsigned i = 0; i < rules.size(); ++i) {
+        //     const datalog::rule *r = rules[i].first;
         //     is_concretely_reachable &= is_concrete[i];
-        // }
-
-        // if (is_concretely_reachable) {
-        //     for (unsigned i = 0; i < rules.size(); ++i) {
-        //         const datalog::rule *r = rules[i].first;
-        //         if (r && r->get_uninterpreted_tail_size() > 0) {
-        //             // -- update must summary
-        //             pred_transformer &rf_pt = get_pred_transformer(r->get_decl());
-        //             reach_fact_ref rf = rf_pt.mk_rf (n, *model, *r, rules[i].second);
-        //             checkpoint ();
-        //             rf_pt.add_rf (rf.get ());
-        //             checkpoint ();
-        //         }
+        //     if (is_concrete[i] && r && r->get_uninterpreted_tail_size() > 0) {
+        //         // -- update must summary
+        //         pred_transformer &rf_pt = get_pred_transformer(r->get_decl());
+        //         reach_fact_ref rf = rf_pt.mk_rf (n, *model, *r, rules[i].second);
+        //         checkpoint ();
+        //         rf_pt.add_rf (rf.get ());
+        //         checkpoint ();
         //     }
         // }
+        for (unsigned i = 0; i < rules.size(); ++i) {
+            is_concretely_reachable &= is_concrete[i];
+        }
+
+        if (is_concretely_reachable) {
+            for (unsigned i = 0; i < rules.size(); ++i) {
+                const datalog::rule *r = rules[i].first;
+                if (r && r->get_uninterpreted_tail_size() > 0) {
+                    // -- update must summary
+                    pred_transformer &rf_pt = get_pred_transformer(r->get_decl());
+                    reach_fact_ref rf = rf_pt.mk_rf (n, *model, *r, rules[i].second);
+                    checkpoint ();
+                    rf_pt.add_rf (rf.get ());
+                    checkpoint ();
+                }
+            }
+        }
 
         // must-reachable
-        if (is_concretely_reachable && all_rules_covered) {
+        if (is_concretely_reachable) {
             LOG_STREAM << "is_concretely_reachable && all_rules_covered\n";
 //            LOG_STREAM << "concrete model:\n";
 //            model_smt2_pp(LOG_STREAM, m, *model, 0);

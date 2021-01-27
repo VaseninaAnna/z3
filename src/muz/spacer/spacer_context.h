@@ -548,6 +548,7 @@ class pred_transformer {
     expr_ref_vector              m_reach_fmls;      // ultimate reachability formulas
     vector<expr_ref_vector>      m_transition_clauses; // extra clause for trans
     expr_ref                     m_transition;      // transition relation
+    expr_ref                     m_trans_test;      // transition relation with no ext_lit
     expr_ref                     m_init;            // initial condition
     app_ref                      m_extend_lit0;     // first literal used to extend initial state
     app_ref                      m_extend_lit;      // current literal to extend initial state
