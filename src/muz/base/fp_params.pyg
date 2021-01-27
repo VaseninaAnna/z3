@@ -49,6 +49,8 @@ def_module_params('fp',
                           ('datalog.profile_timeout_milliseconds', UINT, 0,
                            "instructions and rules that took less than the threshold " +
                            "will not be printed when printed the instruction/rule list"),
+                           ('datalog.synchronize', BOOL, False,
+                           "turns on synch of CHCs"),
                           ('datalog.dbg_fpr_nonempty_relation_signature', BOOL, False,
                            "if true, finite_product_relation will attempt to avoid creating " +
                            "inner relation with empty signature by putting in half of the " +

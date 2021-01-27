@@ -78,7 +78,7 @@ namespace datalog {
     }
 
     void rule_dependencies::populate(const rule_set & rules) {
-        SASSERT(m_data.empty());
+        // SASSERT(m_data.empty());
         for (auto & kv : rules.m_head2rules) {
             ptr_vector<rule> * rules = kv.m_value;
             for (rule* r : *rules) {

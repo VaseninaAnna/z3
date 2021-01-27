@@ -65,8 +65,8 @@ NullBuffer null_buffer;
 std::ostream null_stream(&null_buffer);
 
 #define ENABLE_ASSERTS false
-//#define LOG_STREAM std::cout
-#define LOG_STREAM null_stream
+#define LOG_STREAM std::cout
+// #define LOG_STREAM null_stream
 
 namespace spacer {
 
@@ -2368,9 +2368,15 @@ void pred_transformer::merge(const vector<std::pair<pred_transformer*, unsigned>
             ++real_version;
         }
     }
+    expr_ref_vector lits(m);
+    expr_ref conj(m); 
+    get_ext_lits(lits);
+    conj = mk_and(lits);
+
     flatten_and(transition);
     flatten_and(init);
     m_transition = mk_and(transition);
+    m_transition = mk_or(m_transition, conj);
     m_init = mk_and(init);
 
     m_solver->assert_expr (m_transition);
@@ -4149,34 +4155,34 @@ bool context::is_reachable(pob &n)
                                     reach_pred_used, num_reuse_reach);
     n.m_level = saved;
 
-//    bool is_concretely_reachable = true;
-//    for (unsigned i = 0; i < rules.size(); ++i) {
-//        bool concr = is_concrete[i];
-//        is_concretely_reachable &= concr;
-//        const datalog::rule *r = rules[i].first;
-//        if (concr && r && r->get_uninterpreted_tail_size () > 0) {
-//            // -- update must summary
-//            pred_transformer &rf_pt = get_pred_transformer(r->get_decl());
-//            reach_fact_ref rf = rf_pt.mk_rf (n, *mdl, *r, rules[i].second);
-//            rf_pt.add_rf (rf.get ());
-//        }
-//    }
-
     bool is_concretely_reachable = true;
     for (unsigned i = 0; i < rules.size(); ++i) {
-        is_concretely_reachable &= is_concrete[i];
-    }
-    if (is_concretely_reachable) {
-        for (unsigned i = 0; i < rules.size(); ++i) {
-            const datalog::rule *r = rules[i].first;
-            if (is_concrete[i] && r && r->get_uninterpreted_tail_size () > 0) {
-                // -- update must summary
-                pred_transformer &rf_pt = get_pred_transformer(r->get_decl());
-                reach_fact_ref rf = rf_pt.mk_rf (n, *mdl, *r, rules[i].second);
-                rf_pt.add_rf (rf.get ());
-            }
+        bool concr = is_concrete[i];
+        is_concretely_reachable &= concr;
+        const datalog::rule *r = rules[i].first;
+        if (concr && r && r->get_uninterpreted_tail_size () > 0) {
+            // -- update must summary
+            pred_transformer &rf_pt = get_pred_transformer(r->get_decl());
+            reach_fact_ref rf = rf_pt.mk_rf (n, *mdl, *r, rules[i].second);
+            rf_pt.add_rf (rf.get ());
         }
     }
+
+    // bool is_concretely_reachable = true;
+    // for (unsigned i = 0; i < rules.size(); ++i) {
+    //     is_concretely_reachable &= is_concrete[i];
+    // }
+    // if (is_concretely_reachable) {
+    //     for (unsigned i = 0; i < rules.size(); ++i) {
+    //         const datalog::rule *r = rules[i].first;
+    //         if (is_concrete[i] && r && r->get_uninterpreted_tail_size () > 0) {
+    //             // -- update must summary
+    //             pred_transformer &rf_pt = get_pred_transformer(r->get_decl());
+    //             reach_fact_ref rf = rf_pt.mk_rf (n, *mdl, *r, rules[i].second);
+    //             rf_pt.add_rf (rf.get ());
+    //         }
+    //     }
+    // }
 
 
     if (res != l_true || !is_concretely_reachable) {
@@ -4325,35 +4331,35 @@ lbool context::expand_pob(pob& n, pob_ref_buffer &out)
 
         bool all_rules_covered = rules.size() == n.pt().heads().size();
         bool is_concretely_reachable = true;
-//        for (unsigned i = 0; i < rules.size(); ++i) {
-//            const datalog::rule *r = rules[i].first;
-//            is_concretely_reachable &= is_concrete[i];
-//            if (is_concrete[i] && r && r->get_uninterpreted_tail_size() > 0) {
-//                // -- update must summary
-//                pred_transformer &rf_pt = get_pred_transformer(r->get_decl());
-//                reach_fact_ref rf = rf_pt.mk_rf (n, *model, *r, rules[i].second);
-//                checkpoint ();
-//                rf_pt.add_rf (rf.get ());
-//                checkpoint ();
-//            }
-//        }
         for (unsigned i = 0; i < rules.size(); ++i) {
+            const datalog::rule *r = rules[i].first;
             is_concretely_reachable &= is_concrete[i];
-        }
-
-        if (is_concretely_reachable) {
-            for (unsigned i = 0; i < rules.size(); ++i) {
-                const datalog::rule *r = rules[i].first;
-                if (r && r->get_uninterpreted_tail_size() > 0) {
-                    // -- update must summary
-                    pred_transformer &rf_pt = get_pred_transformer(r->get_decl());
-                    reach_fact_ref rf = rf_pt.mk_rf (n, *model, *r, rules[i].second);
-                    checkpoint ();
-                    rf_pt.add_rf (rf.get ());
-                    checkpoint ();
-                }
+            if (is_concrete[i] && r && r->get_uninterpreted_tail_size() > 0) {
+                // -- update must summary
+                pred_transformer &rf_pt = get_pred_transformer(r->get_decl());
+                reach_fact_ref rf = rf_pt.mk_rf (n, *model, *r, rules[i].second);
+                checkpoint ();
+                rf_pt.add_rf (rf.get ());
+                checkpoint ();
             }
         }
+        // for (unsigned i = 0; i < rules.size(); ++i) {
+        //     is_concretely_reachable &= is_concrete[i];
+        // }
+
+        // if (is_concretely_reachable) {
+        //     for (unsigned i = 0; i < rules.size(); ++i) {
+        //         const datalog::rule *r = rules[i].first;
+        //         if (r && r->get_uninterpreted_tail_size() > 0) {
+        //             // -- update must summary
+        //             pred_transformer &rf_pt = get_pred_transformer(r->get_decl());
+        //             reach_fact_ref rf = rf_pt.mk_rf (n, *model, *r, rules[i].second);
+        //             checkpoint ();
+        //             rf_pt.add_rf (rf.get ());
+        //             checkpoint ();
+        //         }
+        //     }
+        // }
 
         // must-reachable
         if (is_concretely_reachable && all_rules_covered) {
