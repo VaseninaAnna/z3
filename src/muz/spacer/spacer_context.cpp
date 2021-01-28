@@ -1073,10 +1073,8 @@ pred_transformer::pred_transformer(context& ctx, manager& pm, func_decl_multivec
                      ctx.get_params(), m_name);
     init_sig();
 
-    if (heads.size() == 1 && heads[0].count == 1) {
-        m_extend_lit = mk_extend_lit();
-        m_extend_lit0 = m_extend_lit;
-    }
+    m_extend_lit = mk_extend_lit();
+    m_extend_lit0 = m_extend_lit;
 }
 
 
@@ -1095,12 +1093,16 @@ symbol pred_transformer::mk_name() const
 }
 
 app_ref pred_transformer::mk_extend_lit() const {
-    SASSERT(m_heads.size() == 1 && m_heads[0].count == 1);
+    // SASSERT(m_heads.size() == 1 && m_heads[0].count == 1);
     app_ref v(m);
     std::stringstream name;
 
     func_decl *head = m_heads[0].func;
-    name << head->get_name () << "_ext0";
+    if (m_heads.size() == 1 && m_heads[0].count == 1) 
+        name << head->get_name () << "_ext0";
+    else
+        name << m_name << "_MERGEXT0";
+    
     v = m.mk_const (symbol(name.str().c_str()), m.mk_bool_sort());
     return app_ref(m.mk_not (m.mk_const (pm.get_n_pred (v->get_decl ()))), m);
 }
@@ -2349,6 +2351,7 @@ void pred_transformer::merge(const vector<std::pair<pred_transformer*, unsigned>
     expr_ref_vector transition(m);
     expr_ref_vector init(m);
     m_all_init = true;
+    
     unsigned real_version = 0;
     for (auto &pair : pts) {
         pred_transformer *pt = pair.first;
@@ -2356,7 +2359,12 @@ void pred_transformer::merge(const vector<std::pair<pred_transformer*, unsigned>
         for (unsigned version = 0; version < count; ++version) {
             expr_ref tmp(m);
             pm.formula_v2v(pt->m_trans_test, tmp, 0, real_version);
+            tmp = m.mk_or(tmp, m_extend_lit->get_arg(0));
             transition.push_back(tmp);
+
+            pm.formula_v2v(pt->m_extend_lit0->get_arg(0), tmp, 0, real_version);
+            transition.push_back(m.mk_implies(m_extend_lit->get_arg(0), tmp));
+
             pm.formula_v2v(pt->m_init, tmp, 0, real_version);
             init.push_back(tmp);
             for (const expr_ref_vector &tc : pt->m_transition_clauses) {
@@ -2368,15 +2376,10 @@ void pred_transformer::merge(const vector<std::pair<pred_transformer*, unsigned>
             ++real_version;
         }
     }
-    expr_ref_vector lits(m);
-    expr_ref conj(m); 
-    get_ext_lits(lits);
-    conj = mk_and(lits);
 
     flatten_and(transition);
     flatten_and(init);
     m_transition = mk_and(transition);
-    // m_transition = m.mk_or(m_transition, conj);
     m_init = mk_and(init);
 
     m_solver->assert_expr (m_transition);
@@ -4338,35 +4341,35 @@ lbool context::expand_pob(pob& n, pob_ref_buffer &out)
 
         // bool all_rules_covered = rules.size() == n.pt().heads().size();
         bool is_concretely_reachable = true;
-        // for (unsigned i = 0; i < rules.size(); ++i) {
-        //     const datalog::rule *r = rules[i].first;
-        //     is_concretely_reachable &= is_concrete[i];
-        //     if (is_concrete[i] && r && r->get_uninterpreted_tail_size() > 0) {
-        //         // -- update must summary
-        //         pred_transformer &rf_pt = get_pred_transformer(r->get_decl());
-        //         reach_fact_ref rf = rf_pt.mk_rf (n, *model, *r, rules[i].second);
-        //         checkpoint ();
-        //         rf_pt.add_rf (rf.get ());
-        //         checkpoint ();
-        //     }
-        // }
         for (unsigned i = 0; i < rules.size(); ++i) {
+            const datalog::rule *r = rules[i].first;
             is_concretely_reachable &= is_concrete[i];
-        }
-
-        if (is_concretely_reachable) {
-            for (unsigned i = 0; i < rules.size(); ++i) {
-                const datalog::rule *r = rules[i].first;
-                if (r && r->get_uninterpreted_tail_size() > 0) {
-                    // -- update must summary
-                    pred_transformer &rf_pt = get_pred_transformer(r->get_decl());
-                    reach_fact_ref rf = rf_pt.mk_rf (n, *model, *r, rules[i].second);
-                    checkpoint ();
-                    rf_pt.add_rf (rf.get ());
-                    checkpoint ();
-                }
+            if (is_concrete[i] && r && r->get_uninterpreted_tail_size() > 0) {
+                // -- update must summary
+                pred_transformer &rf_pt = get_pred_transformer(r->get_decl());
+                reach_fact_ref rf = rf_pt.mk_rf (n, *model, *r, rules[i].second);
+                checkpoint ();
+                rf_pt.add_rf (rf.get ());
+                checkpoint ();
             }
         }
+        // for (unsigned i = 0; i < rules.size(); ++i) {
+        //     is_concretely_reachable &= is_concrete[i];
+        // }
+
+        // if (is_concretely_reachable) {
+        //     for (unsigned i = 0; i < rules.size(); ++i) {
+        //         const datalog::rule *r = rules[i].first;
+        //         if (r && r->get_uninterpreted_tail_size() > 0) {
+        //             // -- update must summary
+        //             pred_transformer &rf_pt = get_pred_transformer(r->get_decl());
+        //             reach_fact_ref rf = rf_pt.mk_rf (n, *model, *r, rules[i].second);
+        //             checkpoint ();
+        //             rf_pt.add_rf (rf.get ());
+        //             checkpoint ();
+        //         }
+        //     }
+        // }
 
         // must-reachable
         if (is_concretely_reachable) {
