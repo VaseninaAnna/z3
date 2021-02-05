@@ -4673,7 +4673,10 @@ reach_fact *pred_transformer::mk_rf(pob& n, model &mdl, const datalog::rule& r, 
     // collect aux vars to eliminate
     ptr_vector<app>& aux_vars = get_aux_vars (r);
     bool elim_aux = ctx.elim_aux();
-    if (elim_aux) { vars.append(aux_vars.size(), aux_vars.c_ptr()); }
+    if (elim_aux) {
+        for (unsigned j = 0, sz = aux_vars.size (); j < sz; ++j)
+        { vars.push_back(m.mk_const(pm.get_version_pred(aux_vars[j]->get_decl() , 0, version))); }
+    }
 
     res = mk_and (path_cons);
 
