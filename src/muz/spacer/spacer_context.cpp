@@ -4727,7 +4727,9 @@ reach_fact *pred_transformer::mk_rf(pob& n, model &mdl, const datalog::rule& r, 
 
 struct func_decl_triple_lt_proc : public std::binary_function<triple<func_decl*,unsigned,unsigned>, triple<func_decl*,unsigned,unsigned>, bool> {
     bool operator() (const triple<func_decl*,unsigned,unsigned> &a, const triple<func_decl*,unsigned,unsigned> &b) {
-        return !a.first || !b.first || lt(a.first->get_name(), b.first->get_name()) || a.second < b.second || a.third < b.third;
+        return !a.first || !b.first || lt(a.first->get_name(), b.first->get_name()) ||
+            (a.first->get_name() == b.first->get_name() && a.second < b.second) ||
+            (a.first->get_name() == b.first->get_name() && a.second == b.second && a.third < b.third);
     }
 };
 
