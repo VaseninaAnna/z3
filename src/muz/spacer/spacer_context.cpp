@@ -215,19 +215,25 @@ derivation::derivation (pob& parent, expr *trans,
     m_trans (trans, m_parent.get_ast_manager ()),
     m_evars (evars) {}
 
+bool derivation::add_premise (premise* p) {
+    if (p->finalize()) {
+        m_premises.push_back(*p);
+        return true;
+    }
+    return false;
+}
 
+// void derivation::add_reachability_premise (pred_transformer &pt,
+//                               func_decl *decl, unsigned oidx,
+//                               unsigned version, expr *summary,
+//                               const ptr_vector<app> *aux_vars)
+// {m_premises.push_back (premise (pt, decl, oidx, version, summary, aux_vars));}
 
-void derivation::add_reachability_premise (pred_transformer &pt,
-                              func_decl *decl, unsigned oidx,
-                              unsigned version, expr *summary,
-                              const ptr_vector<app> *aux_vars)
-{m_premises.push_back (premise (pt, decl, oidx, version, summary, aux_vars));}
-
-void derivation::add_summary_premise (pred_transformer &pt,
-                                      const manager::source_subst &subst,
-                                      const manager::idx_subst &oidcs,
-                                      expr *summary)
-{m_premises.push_back (premise (pt, subst, oidcs, summary));}
+// void derivation::add_summary_premise (pred_transformer &pt,
+//                                       const manager::source_subst &subst,
+//                                       const manager::idx_subst &oidcs,
+//                                       expr *summary)
+// {m_premises.push_back (premise (pt, subst, oidcs, summary));}
 
 
 pob *derivation::create_first_child (model &mdl) {
@@ -291,7 +297,7 @@ pob *derivation::create_next_child(model &mdl)
         ++m_active;
     }
     if (m_active >= m_premises.size()) { LOG_STREAM << "  the end!\n";return nullptr; }
-    LOG_STREAM << "   " << m_premises[m_active].pt().name() << " (m_active = " << m_active << ")" << "\n";
+    LOG_STREAM << "   " << m_premises[m_active].pt()->name() << " (m_active = " << m_active << ")" << "\n";
 
     // -- update m_trans with the pre-image of m_trans over the must summaries
     summaries.push_back (m_trans);
@@ -332,7 +338,7 @@ pob *derivation::create_next_child(model &mdl)
 //        STRACE("spacer",
 //               tout << "[dvvrd] Adding summary into POST (m_premises): " << "[" << m_premises [i].pt().name() << "]; " << mk_pp(m_premises [i].get_summary (), m) << "; vars: " << m_premises[i].get_ovars() << "\n";);
         summaries.push_back (m_premises [i].get_summary ());
-        LOG_STREAM << i  << ": pushing premise " << mk_pp(m_premises[i].get_summary(), m) << " of " << m_premises[i].pt().name() << "\n";
+        LOG_STREAM << i  << ": pushing premise " << mk_pp(m_premises[i].get_summary(), m) << " of " << m_premises[i].pt()->name() << "\n";
         vars.append (m_premises [i].get_ovars ());
     }
     summaries.push_back (m_trans);
@@ -386,7 +392,7 @@ pob *derivation::create_next_child(model &mdl)
     /* The level and depth are taken from the parent, not the sibling.
        The reasoning is that the sibling has not been checked before,
        and lower level is a better starting point. */
-    pob *n = m_premises[m_active].pt().mk_pob(&m_parent,
+    pob *n = m_premises[m_active].pt()->mk_pob(&m_parent,
                                               prev_level (m_parent.level ()),
                                               m_parent.depth (), post, vars);
     IF_VERBOSE (1, verbose_stream ()
@@ -401,12 +407,12 @@ pob *derivation::create_next_child(model &mdl)
 pob *derivation::create_next_child ()
 {
     if (m_active + 1 >= m_premises.size()) { return nullptr; }
-    LOG_STREAM << "parameterless create_next_child (" << m_premises[m_active].pt().name() << ")\n";
+    LOG_STREAM << "parameterless create_next_child (" << m_premises[m_active].pt()->name() << ")\n";
 
     // update the summary of the active node to some must summary
 
     // construct a new model consistent with the must summary of m_active premise
-    pred_transformer &pt = m_premises[m_active].pt ();
+    pred_transformer &pt = *m_premises[m_active].pt ();
 
     ast_manager &m = get_ast_manager ();
     manager &pm = get_manager ();
@@ -470,7 +476,7 @@ pob *derivation::create_next_child ()
      * new-variables at this point.
      */
     {
-        pred_transformer &pt = m_premises[m_active].pt ();
+        pred_transformer &pt = *m_premises[m_active].pt ();
         app_ref_vector vars (m);
 
         summaries.reset ();
@@ -504,73 +510,83 @@ pob *derivation::create_next_child ()
     return create_next_child (*mdl);
 }
 
-/// derivation::premise
+/// premise
 
-derivation::premise::premise (pred_transformer &pt, func_decl *decl, unsigned o_idx,
-                              unsigned version, expr *summary,
-                              const ptr_vector<app> *aux_vars) :
-    m_pt (pt),
-    m_summary (summary, pt.get_ast_manager ()), m_must (true),
-    m_ovars (pt.get_ast_manager ())
-{
+struct func_decl_triple_lt_proc : public std::binary_function<triple<func_decl*,unsigned,unsigned>, triple<func_decl*,unsigned,unsigned>, bool> {
+    bool operator() (const triple<func_decl*,unsigned,unsigned> &a, const triple<func_decl*,unsigned,unsigned> &b) {
+        return !a.first || !b.first || lt(a.first->get_name(), b.first->get_name()) ||
+            (a.first->get_name() == b.first->get_name() && a.second < b.second) ||
+            (a.first->get_name() == b.first->get_name() && a.second == b.second && a.third < b.third);
+    }
+};
 
-    ast_manager &m = m_pt.get_ast_manager ();
-    manager &sm = m_pt.get_manager ();
+premise::premise (pob& parent, bool is_must, model &mdl) :
+    m_parent (parent), m_must (is_must), m_mdl(mdl), 
+    m_summary (parent.get_ast_manager ()), m_ovars (parent.get_ast_manager ()) {}
 
-    sm.add_source_subst(m_oidcs, decl, 0, o_idx, version);
+// returns true on success, false on failure
+bool premise::finalize() {
+    // nothing to finalize
+    if (m_metaheads.size() == 0)
+        return false;
+    
+    unsigned idx = 0;
+    context& ctx = get_context ();
+    ptr_vector<func_decl> heads;
 
-    for (unsigned i = 0; i < m_pt.sig_size(); ++i) {
-        func_decl *ovar = sm.o2o(pt.sig(i), 0, o_idx);
-        ovar = sm.get_version_pred(ovar, 0, version);
-        m_ovars.push_back(m.mk_const(ovar));
+    ast_manager &m = ctx.get_ast_manager ();  
+    manager &sm = ctx.get_manager ();
+    manager::source_subst s_subst;
+    manager::idx_subst oidcs;
+
+    if (m_must)
+        SASSERT(m_metaheads.size() == 1);
+
+    std::sort(m_metaheads.begin(), m_metaheads.end(), func_decl_triple_lt_proc());
+    for (auto &t : m_metaheads) {
+        LOG_STREAM << "adding summary premise " << t.first->get_name() << " " << idx << std::endl;
+        heads.push_back(t.first);
+        if (!m_must)
+            sm.add_source_subst(m_oidcs, t.first, t.second, t.third, idx);
+        sm.add_o_subst(oidcs, t.first, idx, t.third, t.second);
+        ++idx;
     }
 
-    if (aux_vars)
-        for (unsigned i = 0, sz = aux_vars->size (); i < sz; ++i) {
-            func_decl *ovar = sm.n2o(aux_vars->get(i)->get_decl(), o_idx);
-            ovar = sm.get_version_pred(ovar, 0, version);
+    m_pt = &ctx.get_pred_transformer(heads);
+    const ptr_vector<app> *aux = nullptr;
+    m_summary = m_pt->get_origin_summary (m_mdl, prev_level(m_parent.level()), oidcs, m_must, &aux);    
+
+    if (!m_summary) {
+        LOG_STREAM << "BAILING OUT\n";
+        // dealloc(deriv);
+        return false;
+    }
+
+    if (m_must) {
+        metahead mh = m_metaheads[0];
+        sm.add_source_subst(m_oidcs, mh.first, 0, mh.third, mh.second);
+        for (unsigned i = 0; i < m_pt->sig_size(); ++i) {
+            func_decl *ovar = sm.o2o(m_pt->sig(i), 0, mh.third);
+            ovar = sm.get_version_pred(ovar, 0, mh.second);
             m_ovars.push_back(m.mk_const(ovar));
         }
+        if (aux)
+            for (unsigned i = 0, sz = aux->size (); i < sz; ++i) {
+                func_decl *ovar = sm.n2o(aux->get(i)->get_decl(), mh.third);
+                ovar = sm.get_version_pred(ovar, 0, mh.second);
+                m_ovars.push_back(m.mk_const(ovar));
+            }
+    } else {
+        for (unsigned i = 0; i < m_pt->sig_size(); ++i)
+        { m_ovars.push_back(m.mk_const(sm.o2o(m_pt->sig(i), 0, oidcs))); }
+    }
+
+    return true;
 }
 
-derivation::premise::premise (pred_transformer &pt, const manager::source_subst &subst,
-                              const manager::idx_subst &oidcs, expr *summary) :
-    m_pt (pt), m_oidcs (subst),
-    m_summary (summary, pt.get_ast_manager ()), m_must (false),
-    m_ovars (pt.get_ast_manager ())
-{
-    ast_manager &m = m_pt.get_ast_manager ();
-    manager &sm = m_pt.get_manager ();
-
-    for (unsigned i = 0; i < m_pt.sig_size(); ++i)
-    { m_ovars.push_back(m.mk_const(sm.o2o(pt.sig(i), 0, oidcs))); }
-}
-
-derivation::premise::premise (const derivation::premise &p) :
-    m_pt (p.m_pt), m_oidcs (p.m_oidcs), m_summary (p.m_summary), m_must (p.m_must),
-    m_ovars (p.m_ovars) {}
-
-///// \brief Updated the summary.
-///// The new summary is over n-variables.
-//void derivation::premise::set_summary (expr * summary, bool must,
-//                                       const ptr_vector<app> *aux_vars)
-//{
-//    ast_manager &m = m_pt.get_ast_manager ();
-//    manager &sm = m_pt.get_manager ();
-
-//    m_must = must;
-//    sm.formula_n2o (summary, m_summary, m_oidcs);
-
-//    m_ovars.reset ();
-//    for (unsigned i = 0; i < m_pt.sig_size(); ++i)
-//    { m_ovars.push_back(m.mk_const(sm.o2o(m_pt.sig(i), 0, m_oidcs))); }
-
-//    if (aux_vars)
-//        for (unsigned i = 0, sz = aux_vars->size (); i < sz; ++i)
-//            m_ovars.push_back (m.mk_const (sm.n2o (aux_vars->get (i)->get_decl (),
-//                                                   m_oidcs)));
-//}
-
+// premise::premise (const premise &p) :
+//     m_pt (p.m_pt), m_oidcs (p.m_oidcs), m_summary (p.m_summary), m_must (p.m_must),
+//     m_ovars (p.m_ovars) {}
 
 /// Lemma
 
@@ -4725,15 +4741,6 @@ reach_fact *pred_transformer::mk_rf(pob& n, model &mdl, const datalog::rule& r, 
     return f;
 }
 
-struct func_decl_triple_lt_proc : public std::binary_function<triple<func_decl*,unsigned,unsigned>, triple<func_decl*,unsigned,unsigned>, bool> {
-    bool operator() (const triple<func_decl*,unsigned,unsigned> &a, const triple<func_decl*,unsigned,unsigned> &b) {
-        return !a.first || !b.first || lt(a.first->get_name(), b.first->get_name()) ||
-            (a.first->get_name() == b.first->get_name() && a.second < b.second) ||
-            (a.first->get_name() == b.first->get_name() && a.second == b.second && a.third < b.third);
-    }
-};
-
-
 /**
    \brief create children states from model cube.
 */
@@ -4749,6 +4756,7 @@ bool context::create_children(pob& n,
     LOG_STREAM << std::endl;
     scoped_watch _w_ (m_create_children_watch);
     pred_transformer& pt = n.pt();
+    bool rec_created, nonrec_created;
 
     // obtain all formulas to consider for model generalization
     expr_ref_vector forms(m), lits(m);
@@ -4804,71 +4812,20 @@ bool context::create_children(pob& n,
     LOG_STREAM << "alloc derivation with phi: " << mk_pp(phi, m) << std::endl;
     derivation *deriv = alloc(derivation, n, phi, vars);
 
-/////// ----- begin of old code -------
-//    // pick an order to process children
-//    unsigned_vector kid_order;
-//    kid_order.resize(preds.size(), 0);
-//    for (unsigned i = 0, sz = preds.size(); i < sz; ++i) kid_order[i] = i;
-//    if (m_children_order == CO_REV_RULE) {
-//        kid_order.reverse();
-//    }
-//    else if (m_children_order == CO_RANDOM) {
-//        shuffle(kid_order.size(), kid_order.c_ptr(), m_random);
-//    }
+    premise *rec_premise = alloc(premise, n, false, mdl);
+    premise *nonrec_premise = alloc(premise, n, false, mdl);
 
-//    LOG_STREAM << "------------------------------\n";
-//    for (unsigned i = 0, sz = preds.size(); i < sz; ++i) {
-//        unsigned j = kid_order[i];
-
-//        pred_transformer &pt = get_pred_transformer(preds.get(j));
-//        LOG_STREAM << "CREATE_CHILDREN (LEVEL" << n.level() << "): " << pt.name() << " is " << (reach_pred_used[j] ? "rf" : "sum") << "\n";
-
-//        const ptr_vector<app> *aux = nullptr;
-//        expr_ref sum(m);
-//        sum = pt.get_origin_summary (mdl, prev_level(n.level()),
-//                                     j, reach_pred_used[j], &aux);
-//        if (!sum) {
-//            dealloc(deriv);
-//            return false;
-//        }
-//        STRACE("spacer",
-//               tout << "[dvvrd] Adding premise[" << j << "]: " << reach_pred_used[j] << ";;; " << mk_pp(sum, m) << "\n";);
-//        deriv->add_premise (pt, j, sum, reach_pred_used[j], aux);
-//    }
-/////// ----- end of old code -------
-
-    ptr_vector<func_decl> rec_heads;
-    manager::idx_subst rec_oidcs;
-    ptr_vector<func_decl> nonrec_heads;
-    vector<triple<func_decl*, unsigned, unsigned>> rec_metaheads;
-    vector<triple<func_decl*, unsigned, unsigned>> nonrec_metaheads;
-    manager::source_subst nonrec_source_subst;
-    manager::idx_subst nonrec_oidcs;
-    manager::source_subst rec_source_subst;
-    unsigned recidx = 0;
-    unsigned nonrecidx = 0;
     unsigned idx = 0;
     for (auto &pair : rules) {
         const datalog::rule *r = pair.first;
         unsigned version = pair.second;
         for (unsigned i = 0; i < r->get_uninterpreted_tail_size(); ++i, ++idx) {
+            func_decl *h = r->get_tail(i)->get_decl();
             if (reach_pred_used[idx]) {
-                func_decl *h = r->get_tail(i)->get_decl();
-                pred_transformer &pt = get_pred_transformer(h);
-                const ptr_vector<app> *aux = nullptr;
-                expr_ref sum(m);
-                manager::idx_subst oidcs;
-                m_pm.add_o_subst(oidcs, h, 0, i, version);
-                sum = pt.get_origin_summary (mdl, prev_level(n.level()), oidcs, true, &aux);
-                if (!sum) {
-                    dealloc(deriv);
-                    return false;
-                }
-                LOG_STREAM << "adding reachability premise " << h->get_name() << " " << version << "\n";
-                deriv->add_reachability_premise(pt, h, i, version, sum, aux);
+                premise *reach_premise = alloc(premise, n, true, mdl);
+                reach_premise->add_metahead({h, version, i});
+                deriv->add_premise(reach_premise);
             } else {
-                // dvvrd: TODO: remove copy-paste!
-                func_decl *h = r->get_tail(i)->get_decl();
                 bool is_recursive = false;
                 for (auto &pair : pt.heads()) {
                     if (pair.func == h) {
@@ -4877,83 +4834,18 @@ bool context::create_children(pob& n,
                     }
                 }
                 if (is_recursive) {
-                    rec_metaheads.push_back({h, version, i});
+                    rec_premise->add_metahead({h, version, i});
                 } else {
-                    nonrec_metaheads.push_back({h,version,i});
+                    nonrec_premise->add_metahead({h,version,i});
                 }
-//                if (is_recursive) {
-//                    LOG_STREAM << "adding recursive summary premise " << h->get_name() << " " << version << std::endl;
-//                    rec_heads.push_back(h);
-////                    unsigned v = 0;
-////                    while (rec_oidcs.contains({h, v})) ++v;
-//                    ++recidx;
-//                    m_pm.add_source_subst(rec_source_subst, h, version, i, recidx);
-//                    m_pm.add_o_subst(rec_oidcs, h, recidx, i, version);
-//                } else {
-//                    LOG_STREAM << "adding non-recursive summary premise " << h->get_name() << " " << version << std::endl;
-//                    nonrec_heads.push_back(h);
-////                    unsigned v = 0;
-////                    while (nonrec_oidcs.contains({h, v})) ++v;
-//                    ++nonrecidx;
-//                    m_pm.add_source_subst(nonrec_source_subst, h, version, i, nonrecidx);
-//                    m_pm.add_o_subst(nonrec_oidcs, h, nonrecidx, i, version);
-//                }
             }
         }
     }
-    std::sort(rec_metaheads.begin(), rec_metaheads.end(), func_decl_triple_lt_proc());
-    std::sort(nonrec_metaheads.begin(), nonrec_metaheads.end(), func_decl_triple_lt_proc());
-    for (auto &t : rec_metaheads) {
-        LOG_STREAM << "adding recursive summary premise " << t.first->get_name() << " " << recidx << std::endl;
-        rec_heads.push_back(t.first);
-        m_pm.add_source_subst(rec_source_subst, t.first, t.second, t.third, recidx);
-        m_pm.add_o_subst(rec_oidcs, t.first, recidx, t.third, t.second);
-        ++recidx;
-    }
-    for (auto &t : nonrec_metaheads) {
-        // dvvrd: For me in the future: the triple stores <func, version, i>
-        LOG_STREAM << "adding non-recursive summary premise " << t.first->get_name() << " " << nonrecidx << std::endl;
-        nonrec_heads.push_back(t.first);
-        m_pm.add_source_subst(nonrec_source_subst, t.first, t.second, t.third, nonrecidx);
-        m_pm.add_o_subst(nonrec_oidcs, t.first, nonrecidx, t.third, t.second);
-        ++nonrecidx;
-    }
-
-    SASSERT(!rec_heads.empty() || !nonrec_heads.empty());
-
-    // TODO: rec_heads should not have more heads of each func/version than heads!
-    // The more precise grouping should be implemented!
-
-    LOG_STREAM << "rules count: " << rules.size() << "\n";
-    if (!rec_heads.empty()) {
-        pred_transformer &premise_pt = get_pred_transformer(rec_heads);
-        // dvvrd: TODO: remove copy-paste!
-        // dvvrd: TODO: separate reasoning for ambiguous coverage (like in case of fib)
-        const ptr_vector<app> *aux = nullptr;
-        expr_ref sum(m);
-        sum = premise_pt.get_origin_summary (mdl, prev_level(n.level()), rec_oidcs, false, &aux);
-        if (!sum) {
-            LOG_STREAM << "BAILING OUT REC\n";
-            dealloc(deriv);
-            return false;
-        }
-        LOG_STREAM << "creating recursive child " << premise_pt.name() << "\n";
-        deriv->add_summary_premise(premise_pt, rec_source_subst, rec_oidcs, sum);
-    }
-    if (!nonrec_heads.empty()) {
-        pred_transformer &premise_pt = get_pred_transformer(nonrec_heads);
-        const ptr_vector<app> *aux = nullptr;
-        expr_ref sum(m);
-        sum = premise_pt.get_origin_summary (mdl, prev_level(n.level()), nonrec_oidcs, false, &aux);
-        LOG_STREAM << "NON_REC OR SUM FOR " << premise_pt.name() << " RETURNED " << mk_pp(sum, m) << std::endl;
-        if (!sum) {
-            LOG_STREAM << "BAILING OUT NONREC" << std::endl;
-            dealloc(deriv);
-            return false;
-        }
-        LOG_STREAM << "creating non-recursive child " << premise_pt.name() << std::endl;
-        deriv->add_summary_premise(premise_pt, nonrec_source_subst, nonrec_oidcs, sum);
-    }
+    rec_created = deriv->add_premise(rec_premise);
+    nonrec_created = deriv->add_premise(nonrec_premise);
+    SASSERT (rec_created || nonrec_created);
+    // deriv->add_premise();
+    // deriv->add_premise();
 
     // create post for the first child and add to queue
     pob* kid = deriv->create_first_child (mdl);

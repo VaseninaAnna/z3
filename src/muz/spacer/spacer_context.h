@@ -67,6 +67,7 @@ struct pt_subsumption_comparator {
 };
 typedef poset<pred_transformer, pt_subsumption_comparator> pt_poset;
 typedef pt_poset::comparable_item_collection pt_collection;
+typedef triple<func_decl*, unsigned, unsigned> metahead;
 
 class reach_fact {
     unsigned m_ref_count;
@@ -901,41 +902,49 @@ struct pob_gt_proc : public std::binary_function<const pob*, const pob*, bool> {
 
 /**
  */
+
+   /// a single premise of a derivation
+class premise {
+    /// parent model node
+    pob&                        m_parent;
+    bool                        m_must;
+    model&                      m_mdl;
+
+    vector<metahead> m_metaheads;
+
+    pred_transformer *m_pt;
+    /// origin orders in the rule
+    manager::source_subst m_oidcs;
+    /// summary fact corresponding to the premise
+    expr_ref m_summary;
+    ///  whether this is a must or may premise
+
+    app_ref_vector m_ovars;
+    /// metaheads <func, version, i>
+
+public:
+    premise (pob& parent, bool is_must, model &mdl);
+    // premise (const premise &p);
+
+    // constructor for sum primise which will be filled later
+
+
+    bool is_must() {return m_must;}
+    expr * get_summary() {return m_summary.get ();}
+    const app_ref_vector &get_ovars() {return m_ovars;}
+    const manager::source_subst &get_oidcs() {return m_oidcs;}
+    pred_transformer *pt() {return m_pt;}
+
+    void add_metahead(metahead mh) {m_metaheads.push_back(mh);}
+    ast_manager &get_ast_manager () const {return m_parent.get_ast_manager ();}
+    context& get_context () const {return m_parent.get_context ();}
+    bool finalize ();
+
+};
+
 class derivation {
-    /// a single premise of a derivation
-    class premise {
-        pred_transformer &m_pt;
-        /// origin orders in the rule
-        manager::source_subst m_oidcs;
-        /// summary fact corresponding to the premise
-        expr_ref m_summary;
-        ///  whether this is a must or may premise
-        bool m_must;
-        app_ref_vector m_ovars;
-
-    public:
-        premise (pred_transformer &pt, func_decl *decl, unsigned oidx, unsigned version,
-                 expr *summary, const ptr_vector<app> *aux_vars = nullptr);
-        premise (pred_transformer &pt, const manager::source_subst &subst,
-                 const manager::idx_subst &oidcs, expr *summary);
-        premise (const premise &p);
-
-        bool is_must() {return m_must;}
-        expr * get_summary() {return m_summary.get ();}
-        const app_ref_vector &get_ovars() {return m_ovars;}
-        const manager::source_subst &get_oidcs() {return m_oidcs;}
-        pred_transformer &pt() {return m_pt;}
-
-        /// \brief Updated the summary.
-        /// The new summary is over n-variables.
-//        void set_summary(expr * summary, bool must,
-//                         const ptr_vector<app> *aux_vars = nullptr);
-    };
-
-
     /// parent model node
     pob&                         m_parent;
-
     /// the premises
     vector<premise>                     m_premises;
     /// pointer to the active premise
@@ -951,6 +960,7 @@ class derivation {
     void exist_skolemize(expr *fml, app_ref_vector &vars, expr_ref &res);
 public:
     derivation (pob& parent, expr *trans, app_ref_vector const &evars);
+    bool add_premise(premise* p);
     void add_reachability_premise (pred_transformer &pt,
                                    func_decl *decl, unsigned oidx,
                                    unsigned version, expr * summary,
