@@ -223,18 +223,34 @@ bool derivation::add_premise (premise* p) {
     return false;
 }
 
-// void derivation::add_reachability_premise (pred_transformer &pt,
-//                               func_decl *decl, unsigned oidx,
-//                               unsigned version, expr *summary,
-//                               const ptr_vector<app> *aux_vars)
-// {m_premises.push_back (premise (pt, decl, oidx, version, summary, aux_vars));}
+void derivation::split_active_premise(vector<bool> reach_bitmap) {
+    LOG_STREAM << "in split active premises" << std::endl;
 
-// void derivation::add_summary_premise (pred_transformer &pt,
-//                                       const manager::source_subst &subst,
-//                                       const manager::idx_subst &oidcs,
-//                                       expr *summary)
-// {m_premises.push_back (premise (pt, subst, oidcs, summary));}
+    vector<metahead> metaheads = m_premises[m_active].get_metaheads();
+    premise &act_premise = m_premises[m_active];
+    premise *reach_premise = alloc(premise, act_premise.get_parent(), false, act_premise.get_model());
+    premise *nonreach_premise = alloc(premise, act_premise.get_parent(), false, act_premise.get_model());
+    vector<premise>  tmp_premises;
 
+    for (unsigned i = 0; i< reach_bitmap.size (); ++i) {
+        if (reach_bitmap[i])
+            reach_premise->add_metahead(metaheads[i]);
+        else
+            nonreach_premise->add_metahead(metaheads[i]);
+    }
+
+    if (reach_premise->finalize ())
+        tmp_premises.push_back(*reach_premise);
+
+    if (nonreach_premise->finalize ())
+        tmp_premises.push_back(*nonreach_premise);
+
+    for (unsigned i = m_active + 1; i < m_premises.size (); ++i)
+        tmp_premises.push_back(m_premises[i]);
+    
+    m_premises.swap(tmp_premises);
+    m_active = 0;
+}
 
 pob *derivation::create_first_child (model &mdl) {
     if (m_premises.empty()) { return nullptr; }
@@ -524,6 +540,10 @@ premise::premise (pob& parent, bool is_must, model &mdl) :
     m_parent (parent), m_must (is_must), m_mdl(mdl), 
     m_summary (parent.get_ast_manager ()), m_ovars (parent.get_ast_manager ()) {}
 
+// premise::premise (const premise &p) :
+//     m_parent (p.m_parent), m_must (p.m_must), m_mdl(p.m_mdl), 
+//     m_summary (p.get_ast_manager ()), m_ovars (p.get_ast_manager ()) {}
+
 // returns true on success, false on failure
 bool premise::finalize() {
     // nothing to finalize
@@ -544,7 +564,6 @@ bool premise::finalize() {
 
     std::sort(m_metaheads.begin(), m_metaheads.end(), func_decl_triple_lt_proc());
     for (auto &t : m_metaheads) {
-        LOG_STREAM << "adding summary premise " << t.first->get_name() << " " << idx << std::endl;
         heads.push_back(t.first);
         if (!m_must)
             sm.add_source_subst(m_oidcs, t.first, t.second, t.third, idx);
@@ -583,10 +602,6 @@ bool premise::finalize() {
 
     return true;
 }
-
-// premise::premise (const premise &p) :
-//     m_pt (p.m_pt), m_oidcs (p.m_oidcs), m_summary (p.m_summary), m_must (p.m_must),
-//     m_ovars (p.m_ovars) {}
 
 /// Lemma
 
@@ -4182,8 +4197,10 @@ bool context::is_reachable(pob &n)
     n.m_level = saved;
 
     bool is_concretely_reachable = true;
+    bool is_concrete_one = false;
     for (unsigned i = 0; i < rules.size(); ++i) {
         bool concr = is_concrete[i];
+        is_concrete_one |= concr;
         is_concretely_reachable &= concr;
         const datalog::rule *r = rules[i].first;
         if (concr && r && r->get_uninterpreted_tail_size () > 0) {
@@ -4194,9 +4211,9 @@ bool context::is_reachable(pob &n)
         }
     }
 
-    // bool is_concretely_reachable = true;
+    // bool is_reachable = false;
     // for (unsigned i = 0; i < rules.size(); ++i) {
-    //     is_concretely_reachable &= is_concrete[i];
+    //     is_reachable |= is_concrete[i];
     // }
     // if (is_concretely_reachable) {
     //     for (unsigned i = 0; i < rules.size(); ++i) {
@@ -4211,14 +4228,13 @@ bool context::is_reachable(pob &n)
     // }
 
 
-    if (res != l_true || !is_concretely_reachable) {
+    if (res != l_true || !is_concrete_one) {
         IF_VERBOSE(1, verbose_stream () << " F "
                    << std::fixed << std::setprecision(2)
                    << watch.get_seconds () << "\n";);
         return false;
     }
     SASSERT(res == l_true);
-    SASSERT(is_concretely_reachable);
 
     // if n has a derivation, create a new child and report l_undef
     // otherwise if n has no derivation or no new children, report l_true
@@ -4233,6 +4249,8 @@ bool context::is_reachable(pob &n)
     if (deriv) {
         STRACE("spacer",
                tout << "[dvvrd] before create_next_child in is_reachable\n";);
+        if (!is_concretely_reachable)
+            deriv->split_active_premise(is_concrete);
         next = deriv->create_next_child ();
         if (next) {
             SASSERT(!next->is_closed());
@@ -4355,10 +4373,15 @@ lbool context::expand_pob(pob& n, pob_ref_buffer &out)
         // update stats
         m_stats.m_num_reuse_reach += num_reuse_reach;
 
+        if (rules.size() == 0)
+            return l_true;
+
         // bool all_rules_covered = rules.size() == n.pt().heads().size();
         bool is_concretely_reachable = true;
+        bool is_concrete_one = false;
         for (unsigned i = 0; i < rules.size(); ++i) {
             const datalog::rule *r = rules[i].first;
+            is_concrete_one |= is_concrete[i];
             is_concretely_reachable &= is_concrete[i];
             if (is_concrete[i] && r && r->get_uninterpreted_tail_size() > 0) {
                 // -- update must summary
@@ -4388,7 +4411,7 @@ lbool context::expand_pob(pob& n, pob_ref_buffer &out)
         // }
 
         // must-reachable
-        if (is_concretely_reachable) {
+        if (is_concrete_one) {
             LOG_STREAM << "is_concretely_reachable && all_rules_covered\n";
 //            LOG_STREAM << "concrete model:\n";
 //            model_smt2_pp(LOG_STREAM, m, *model, 0);
@@ -4404,6 +4427,8 @@ lbool context::expand_pob(pob& n, pob_ref_buffer &out)
             n.close ();
 
             if (deriv) {
+                if (!is_concretely_reachable)
+                    deriv->split_active_premise(is_concrete);
                 next = deriv->create_next_child ();
                 checkpoint ();
                 if (next) {
@@ -4433,7 +4458,7 @@ lbool context::expand_pob(pob& n, pob_ref_buffer &out)
             return next ? l_undef : l_true;
         }
 
-        if (!is_concretely_reachable) {
+        if (!is_concrete_one) {
             // create a child of n
             STRACE("spacer",
                     tout << "[dvvrd] RE-PUSHING POB: [" << (long)(&n) << "] [parent: " << (long)(n.parent())
@@ -4825,6 +4850,7 @@ bool context::create_children(pob& n,
                 premise *reach_premise = alloc(premise, n, true, mdl);
                 reach_premise->add_metahead({h, version, i});
                 deriv->add_premise(reach_premise);
+                LOG_STREAM << "added reach premise " << h->get_name() << " " << idx << std::endl;
             } else {
                 bool is_recursive = false;
                 for (auto &pair : pt.heads()) {
@@ -4835,8 +4861,10 @@ bool context::create_children(pob& n,
                 }
                 if (is_recursive) {
                     rec_premise->add_metahead({h, version, i});
+                    LOG_STREAM << "added recursive head " << h->get_name() << " " << idx << std::endl;
                 } else {
                     nonrec_premise->add_metahead({h,version,i});
+                    LOG_STREAM << "added non-recursive head " << h->get_name() << " " << idx << std::endl;
                 }
             }
         }
@@ -4844,12 +4872,9 @@ bool context::create_children(pob& n,
     rec_created = deriv->add_premise(rec_premise);
     nonrec_created = deriv->add_premise(nonrec_premise);
     SASSERT (rec_created || nonrec_created);
-    // deriv->add_premise();
-    // deriv->add_premise();
 
     // create post for the first child and add to queue
     pob* kid = deriv->create_first_child (mdl);
-
     // -- failed to create derivation, cleanup and bail out
     if (!kid) {
         dealloc(deriv);

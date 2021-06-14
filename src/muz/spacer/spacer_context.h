@@ -938,7 +938,10 @@ public:
     void add_metahead(metahead mh) {m_metaheads.push_back(mh);}
     ast_manager &get_ast_manager () const {return m_parent.get_ast_manager ();}
     context& get_context () const {return m_parent.get_context ();}
+    pob& get_parent () const {return m_parent;}
+    model& get_model() const {return m_mdl;}
     bool finalize ();
+    vector<metahead> get_metaheads() {return m_metaheads;}
 
 };
 
@@ -982,6 +985,7 @@ public:
     manager &get_manager () const {return m_parent.get_manager ();}
     context &get_context() const {return m_parent.get_context();}
     pred_transformer &pt() const {return m_parent.pt();}
+    void split_active_premise(vector<bool> reach_bitmap);
 };
 
 
